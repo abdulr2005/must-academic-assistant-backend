@@ -66,17 +66,16 @@ def is_registration_load_question(
 
 
 # =========================================================
-# GPA Extraction For Retrieval Filtering
+# GPA Helpers
 # =========================================================
 
 def extract_gpa_from_question(
     question: str,
 ):
     """
-    Extract GPA only for retrieval routing.
+    Fallback GPA extraction from the question text.
 
-    The standalone question normally contains the GPA
-    because conversation rewriting includes profile context.
+    Profile GPA is preferred whenever available.
     """
 
     q = question.lower()
@@ -94,6 +93,7 @@ def extract_gpa_from_question(
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             q,
@@ -115,6 +115,33 @@ def extract_gpa_from_question(
     return None
 
 
+def get_profile_gpa(
+    profile: dict = None,
+):
+    """
+    Safely get GPA from session profile.
+    """
+
+    if not profile:
+        return None
+
+    value = profile.get("gpa")
+
+    if value is None:
+        return None
+
+    try:
+        value = float(value)
+
+    except (TypeError, ValueError):
+        return None
+
+    if 0.0 <= value <= 4.0:
+        return value
+
+    return None
+
+
 # =========================================================
 # Retrieval Window
 # =========================================================
@@ -123,10 +150,10 @@ def get_retrieval_top_k(
     question: str,
 ) -> int:
     """
-    Keep the final context small.
+    Keep final context small.
 
-    Registration-load questions need only the relevant
-    GPA regulation articles after post-filtering.
+    Registration-load questions use regulation-only
+    filtering after a wider candidate retrieval.
     """
 
     if is_registration_load_question(
@@ -145,23 +172,43 @@ def filter_registration_results(
     results: list,
     question: str,
     final_top_k: int,
+    profile: dict = None,
 ) -> list:
     """
-    Remove unrelated semester plans/courses from
-    registration-load questions.
+    Filter registration-load retrieval to the correct
+    GPA regulation articles.
 
-    Select only the GPA regulation articles that apply
-    to the GPA mentioned in the standalone question.
+    Priority:
+        1. GPA stored in session profile
+        2. GPA mentioned in question text
+
+    This prevents semester-plan/course chunks from
+    contaminating registration-load answers.
     """
 
-    gpa = extract_gpa_from_question(
-        question
+    # =====================================================
+    # Prefer profile GPA
+    # =====================================================
+
+    gpa = get_profile_gpa(
+        profile
     )
 
-    # Keep only GPA regulation articles.
+    # Fallback to question only if profile has no GPA
+    if gpa is None:
+        gpa = extract_gpa_from_question(
+            question
+        )
+
+
+    # =====================================================
+    # Keep only GPA regulation chunks
+    # =====================================================
+
     gpa_results = []
 
     for item in results:
+
         metadata = (
             item.get("metadata")
             or {}
@@ -175,38 +222,50 @@ def filter_registration_results(
                 item
             )
 
-    # If GPA could not be identified,
-    # still never allow semester plans to contaminate
-    # a registration-load answer.
+
+    # =====================================================
+    # If GPA is unavailable
+    # =====================================================
+
     if gpa is None:
         return gpa_results[
             :final_top_k
         ]
 
+
     # =====================================================
-    # Choose the exact regulation articles needed
+    # Select required regulation articles
     # =====================================================
 
     if gpa < 2.0:
+
         preferred_ids = [
             "gpa_article_2",
             "gpa_article_1",
         ]
 
     elif gpa < 3.0:
+
         preferred_ids = [
             "gpa_article_3",
             "gpa_article_1",
         ]
 
     else:
+
         preferred_ids = [
             "gpa_article_1",
         ]
 
+
+    # =====================================================
+    # Build lookup by chunk_id
+    # =====================================================
+
     by_chunk_id = {}
 
     for item in gpa_results:
+
         metadata = (
             item.get("metadata")
             or {}
@@ -221,9 +280,15 @@ def filter_registration_results(
                 chunk_id
             ] = item
 
+
+    # =====================================================
+    # Select preferred chunks
+    # =====================================================
+
     selected = []
 
     for chunk_id in preferred_ids:
+
         item = by_chunk_id.get(
             chunk_id
         )
@@ -233,14 +298,17 @@ def filter_registration_results(
                 item
             )
 
-    # Defensive fallback:
-    # if an expected article was not present
-    # in the candidate pool, use remaining GPA articles
-    # rather than unrelated semester/course chunks.
+
+    # =====================================================
+    # Defensive fallback
+    # =====================================================
+
     if len(selected) < len(
         preferred_ids
     ):
+
         for item in gpa_results:
+
             if item not in selected:
                 selected.append(
                     item
@@ -248,6 +316,7 @@ def filter_registration_results(
 
             if len(selected) >= final_top_k:
                 break
+
 
     return selected[
         :final_top_k
@@ -261,7 +330,15 @@ def filter_registration_results(
 def retrieve_context(
     question: str,
     top_k: int = 3,
+    profile: dict = None,
 ) -> dict:
+    """
+    Retrieve RAG context.
+
+    For registration-load questions, session profile GPA
+    is injected into retrieval routing so image-extracted
+    or previously stored GPA is always available.
+    """
 
     registration_load = (
         is_registration_load_question(
@@ -269,22 +346,57 @@ def retrieve_context(
         )
     )
 
-    # For registration-load questions:
-    # retrieve a wider candidate pool,
-    # then reduce it locally to the correct regulation
-    # articles only.
+
+    # =====================================================
+    # Build retrieval query
+    # =====================================================
+
+    retrieval_question = question
+
+    if registration_load:
+
+        profile_gpa = get_profile_gpa(
+            profile
+        )
+
+        if profile_gpa is not None:
+
+            retrieval_question = (
+                f"{question}\n"
+                f"Student current GPA: "
+                f"{profile_gpa:.2f}"
+            )
+
+
+    # =====================================================
+    # Wider candidate pool for registration rules
+    # =====================================================
+
     request_top_k = (
-        max(top_k, 6)
+        max(
+            top_k,
+            6,
+        )
         if registration_load
         else top_k
     )
 
+
     payload = {
-        "question": question,
-        "top_k": request_top_k,
+        "question":
+            retrieval_question,
+
+        "top_k":
+            request_top_k,
     }
 
+
+    # =====================================================
+    # RAG API request
+    # =====================================================
+
     try:
+
         response = requests.post(
             RAG_API_URL,
             json=payload,
@@ -294,9 +406,11 @@ def retrieve_context(
         response.raise_for_status()
 
     except requests.RequestException as exc:
+
         raise RuntimeError(
             f"RAG API request failed: {exc}"
         ) from exc
+
 
     data = response.json()
 
@@ -305,21 +419,30 @@ def retrieve_context(
         [],
     )
 
+
     # =====================================================
-    # Prevent semester-plan contamination
+    # Registration filtering
     # =====================================================
 
     if registration_load:
+
         results = filter_registration_results(
             results=results,
-            question=question,
+            question=retrieval_question,
             final_top_k=top_k,
+            profile=profile,
         )
 
     else:
+
         results = results[
             :top_k
         ]
+
+
+    # =====================================================
+    # Normalize context
+    # =====================================================
 
     context = []
     sources = []
@@ -383,6 +506,7 @@ def retrieve_context(
                 chunk_id
             )
 
+
     return {
         "context":
             context,
@@ -440,9 +564,9 @@ def needs_conversation_context(
     question: str,
 ) -> bool:
     """
-    Return True only when the question depends on previous
-    conversation context and does not identify the subject
-    itself.
+    Return True when the question depends on previous
+    conversation context and does not identify the
+    subject itself.
     """
 
     q = (
@@ -451,8 +575,11 @@ def needs_conversation_context(
         .strip()
     )
 
-    # Explicit course code means the question
-    # is already self-contained.
+
+    # =====================================================
+    # Explicit course code = self-contained
+    # =====================================================
+
     course_code_pattern = (
         r"\b[a-z]{2,5}\.?\d{3}\b"
     )
@@ -463,6 +590,11 @@ def needs_conversation_context(
         flags=re.IGNORECASE,
     ):
         return False
+
+
+    # =====================================================
+    # Follow-up references
+    # =====================================================
 
     reference_phrases = [
         # English
@@ -505,9 +637,13 @@ def rewrite_question(
     question: str,
     history: list,
 ) -> str:
+    """
+    Rewrite contextual follow-ups as standalone questions.
+    """
 
     if not history:
         return question
+
 
     conversation = []
 
@@ -527,9 +663,11 @@ def rewrite_question(
             f"{role}: {content}"
         )
 
+
     history_text = "\n".join(
         conversation
     )
+
 
     rewrite_prompt = f"""
 Rewrite the student's latest question as a standalone question.
@@ -537,9 +675,6 @@ Rewrite the student's latest question as a standalone question.
 Use the conversation history only to resolve references such as:
 it, its, that course, this subject, that requirement,
 or similar follow-up references.
-
-If the student's stored profile information is necessary
-to make the latest question self-contained, preserve it.
 
 Do not answer the question.
 Do not add academic facts.
@@ -554,11 +689,17 @@ Latest question:
 {question}
 """
 
+
     rewritten = llm.invoke(
         rewrite_prompt
     )
 
     content = rewritten.content
+
+
+    # =====================================================
+    # Gemini-style structured content
+    # =====================================================
 
     if isinstance(
         content,
@@ -573,6 +714,7 @@ Latest question:
                 block,
                 str,
             ):
+
                 text_parts.append(
                     block
                 )
@@ -595,14 +737,17 @@ Latest question:
             text_parts
         )
 
+
     if not isinstance(
         content,
         str,
     ):
+
         raise RuntimeError(
             "Unexpected LLM response type: "
             f"{type(content)}"
         )
+
 
     return content.strip()
 
@@ -617,6 +762,9 @@ def generate_answer(
     history: list,
     profile: dict = None,
 ):
+    """
+    Generate the final grounded academic answer.
+    """
 
     turn_prompt = build_turn_prompt(
         student_profile=profile,
@@ -624,6 +772,7 @@ def generate_answer(
         context=context,
         question=question,
     )
+
 
     messages = [
         (
@@ -636,13 +785,18 @@ def generate_answer(
         ),
     ]
 
+
     response = llm.invoke(
         messages
     )
 
     content = response.content
 
-    # Gemini-style structured content blocks
+
+    # =====================================================
+    # Gemini-style structured content
+    # =====================================================
+
     if isinstance(
         content,
         list,
@@ -656,6 +810,7 @@ def generate_answer(
                 block,
                 str,
             ):
+
                 text_parts.append(
                     block
                 )
@@ -678,13 +833,16 @@ def generate_answer(
             text_parts
         )
 
+
     if not isinstance(
         content,
         str,
     ):
+
         raise RuntimeError(
             "Unexpected LLM response type: "
             f"{type(content)}"
         )
+
 
     return content.strip()

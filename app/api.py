@@ -7,6 +7,11 @@ from fastapi import (
     File,
 )
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+
+from .academic_record_parser import (
+    parse_academic_record,
+)
 
 from .student_profile import (
     extract_profile_updates,
@@ -25,26 +30,26 @@ from .rag_chain import (
 from .session_store import session_store
 
 
-# ==================================
+# =========================================================
 # Logging
-# ==================================
+# =========================================================
 
 logger = logging.getLogger(__name__)
 
 
-# ==================================
-# FastAPI App
-# ==================================
+# =========================================================
+# FastAPI
+# =========================================================
 
 app = FastAPI(
     title="MUST Academic Assistant API",
-    version="3.0.0",
+    version="3.1.0",
 )
 
 
-# ==================================
+# =========================================================
 # Request Models
-# ==================================
+# =========================================================
 
 class ChatRequest(BaseModel):
     session_id: str = Field(
@@ -58,9 +63,9 @@ class ChatRequest(BaseModel):
     )
 
 
-# ==================================
+# =========================================================
 # Health
-# ==================================
+# =========================================================
 
 @app.get("/")
 @app.get("/health")
@@ -68,26 +73,25 @@ def health():
     return {
         "status": "ok",
         "service": "MUST Academic Assistant API",
+        "version": "3.1.0",
+        "vision": True,
     }
 
 
-# ==================================
+# =========================================================
 # Chat
-# ==================================
+# =========================================================
 
 @app.post("/chat")
 def chat(req: ChatRequest):
 
-    # Keep track of the current execution stage.
-    # If a 500 error happens, Render logs will show
-    # exactly where the request failed.
     stage = "start"
 
     try:
 
-        # ==================================
-        # 1. Load session state
-        # ==================================
+        # =================================================
+        # 1. Load session
+        # =================================================
 
         stage = "load_session"
 
@@ -100,9 +104,9 @@ def chat(req: ChatRequest):
         )
 
 
-        # ==================================
-        # 2. Extract personal student data
-        # ==================================
+        # =================================================
+        # 2. Extract profile information from text
+        # =================================================
 
         stage = "extract_profile"
 
@@ -111,7 +115,6 @@ def chat(req: ChatRequest):
         )
 
         if updates.get("gpa") is not None:
-
             session_store.update_profile(
                 req.session_id,
                 gpa=updates["gpa"],
@@ -129,22 +132,19 @@ def chat(req: ChatRequest):
             )
 
         if updates.get("major") is not None:
-
             session_store.update_profile(
                 req.session_id,
                 major=updates["major"],
             )
 
-
-        # Reload profile after updates
         profile = session_store.get_profile(
             req.session_id
         )
 
 
-        # ==================================
+        # =================================================
         # 3. Onboarding
-        # ==================================
+        # =================================================
 
         stage = "onboarding"
 
@@ -193,9 +193,9 @@ def chat(req: ChatRequest):
             }
 
 
-        # ==================================
-        # 4. Detect profile-only message
-        # ==================================
+        # =================================================
+        # 4. Profile-only message detection
+        # =================================================
 
         stage = "profile_only_check"
 
@@ -206,7 +206,6 @@ def chat(req: ChatRequest):
             ) is not None
             or updates.get("major") is not None
         )
-
 
         question_indicators = [
             "?",
@@ -230,19 +229,16 @@ def chat(req: ChatRequest):
             "ينفع",
         ]
 
-
         question_lower = (
             req.question
             .lower()
         )
-
 
         looks_like_question = any(
             indicator in question_lower
             for indicator
             in question_indicators
         )
-
 
         if (
             profile_data_was_supplied
@@ -290,9 +286,9 @@ def chat(req: ChatRequest):
             }
 
 
-        # ==================================
+        # =================================================
         # 5. Ambiguous follow-up protection
-        # ==================================
+        # =================================================
 
         stage = "followup_validation"
 
@@ -347,9 +343,9 @@ def chat(req: ChatRequest):
             }
 
 
-        # ==================================
-        # 6. Rewrite follow-up question
-        # ==================================
+        # =================================================
+        # 6. Rewrite follow-up
+        # =================================================
 
         stage = "rewrite_question"
 
@@ -361,9 +357,9 @@ def chat(req: ChatRequest):
         )
 
 
-        # ==================================
-        # 7. Retrieve RAG context
-        # ==================================
+        # =================================================
+        # 7. RAG retrieval
+        # =================================================
 
         stage = "rag_retrieval"
 
@@ -374,6 +370,7 @@ def chat(req: ChatRequest):
         retrieved = retrieve_context(
             question=standalone_question,
             top_k=top_k,
+            profile=profile,
         )
 
         context = retrieved[
@@ -381,9 +378,9 @@ def chat(req: ChatRequest):
         ]
 
 
-        # ==================================
-        # 8. Generate personalized answer
-        # ==================================
+        # =================================================
+        # 8. Generate answer
+        # =================================================
 
         stage = "answer_generation"
 
@@ -406,9 +403,9 @@ def chat(req: ChatRequest):
             )
 
 
-        # ==================================
+        # =================================================
         # 9. Save conversation
-        # ==================================
+        # =================================================
 
         stage = "save_conversation"
 
@@ -425,9 +422,9 @@ def chat(req: ChatRequest):
         )
 
 
-        # ==================================
+        # =================================================
         # 10. Response
-        # ==================================
+        # =================================================
 
         stage = "response"
 
@@ -460,8 +457,6 @@ def chat(req: ChatRequest):
 
     except Exception as exc:
 
-        # This prints the FULL traceback
-        # in Render logs.
         logger.exception(
             "Unhandled /chat error | "
             "stage=%s | session_id=%s",
@@ -478,9 +473,9 @@ def chat(req: ChatRequest):
         ) from exc
 
 
-# ==================================
+# =========================================================
 # Academic Record Upload
-# ==================================
+# =========================================================
 
 @app.post(
     "/session/{session_id}/transcript"
@@ -490,11 +485,15 @@ async def upload_transcript(
     file: UploadFile = File(...),
 ):
 
+    stage = "start"
+
     try:
 
-        # ==================================
+        # =================================================
         # 1. Validate file type
-        # ==================================
+        # =================================================
+
+        stage = "validate_file_type"
 
         allowed_content_types = {
             "image/jpeg",
@@ -511,15 +510,16 @@ async def upload_transcript(
                 status_code=400,
                 detail=(
                     "Unsupported file type. "
-                    "Please upload JPG, "
-                    "PNG, or PDF."
+                    "Please upload JPG, PNG, or PDF."
                 ),
             )
 
 
-        # ==================================
-        # 2. Read uploaded file
-        # ==================================
+        # =================================================
+        # 2. Read file
+        # =================================================
+
+        stage = "read_file"
 
         file_bytes = await file.read()
 
@@ -533,9 +533,11 @@ async def upload_transcript(
             )
 
 
-        # ==================================
-        # 3. Validate file size
-        # ==================================
+        # =================================================
+        # 3. Validate size
+        # =================================================
+
+        stage = "validate_file_size"
 
         max_size = (
             10
@@ -555,13 +557,142 @@ async def upload_transcript(
             )
 
 
-        # ==================================
+        # =================================================
         # 4. Ensure session exists
-        # ==================================
+        # =================================================
+
+        stage = "ensure_session"
 
         session_store.update_profile(
-            session_id,
+            session_id
         )
+
+
+        # =================================================
+        # 5. Vision extraction
+        # =================================================
+
+        stage = "vision_extraction"
+
+        extracted = await run_in_threadpool(
+            parse_academic_record,
+            file_bytes,
+            file.content_type,
+        )
+
+
+        # =================================================
+        # 6. Validate parser contract
+        # =================================================
+
+        stage = "validate_extraction"
+
+        if not isinstance(
+            extracted,
+            dict,
+        ):
+            raise RuntimeError(
+                "Vision parser returned "
+                "an invalid response type."
+            )
+
+        expected_fields = {
+            "gpa",
+            "completed_hours",
+            "major",
+            "completed_courses",
+        }
+
+        missing_keys = (
+            expected_fields
+            - set(extracted.keys())
+        )
+
+        if missing_keys:
+            raise RuntimeError(
+                "Vision parser response is "
+                "missing required keys: "
+                + ", ".join(
+                    sorted(missing_keys)
+                )
+            )
+
+
+        # =================================================
+        # 7. Update student session profile
+        # =================================================
+
+        stage = "update_profile"
+
+        update_kwargs = {}
+
+
+        # GPA
+        if extracted.get(
+            "gpa"
+        ) is not None:
+
+            update_kwargs[
+                "gpa"
+            ] = extracted[
+                "gpa"
+            ]
+
+
+        # Completed hours
+        if extracted.get(
+            "completed_hours"
+        ) is not None:
+
+            update_kwargs[
+                "completed_hours"
+            ] = extracted[
+                "completed_hours"
+            ]
+
+
+        # Major
+        if extracted.get(
+            "major"
+        ) is not None:
+
+            update_kwargs[
+                "major"
+            ] = extracted[
+                "major"
+            ]
+
+
+        # Completed courses
+        completed_courses = (
+            extracted.get(
+                "completed_courses"
+            )
+        )
+
+        if isinstance(
+            completed_courses,
+            list,
+        ) and completed_courses:
+
+            update_kwargs[
+                "completed_courses"
+            ] = completed_courses
+
+
+        if update_kwargs:
+
+            session_store.update_profile(
+                session_id,
+                **update_kwargs,
+            )
+
+
+        # =================================================
+        # 8. Reload updated profile
+        # =================================================
+
+        stage = "reload_profile"
 
         profile = (
             session_store.get_profile(
@@ -570,13 +701,28 @@ async def upload_transcript(
         )
 
 
-        # ==================================
-        # 5. Vision extraction comes next
-        # ==================================
+        # =================================================
+        # 9. Determine onboarding state
+        # =================================================
+
+        stage = "profile_status"
+
+        onboarding_complete = (
+            profile_is_ready(
+                profile
+            )
+        )
+
+
+        # =================================================
+        # 10. Response
+        # =================================================
+
+        stage = "response"
 
         return {
             "status":
-                "uploaded",
+                "processed",
 
             "session_id":
                 session_id,
@@ -592,18 +738,17 @@ async def upload_transcript(
                     len(file_bytes),
             },
 
+            "extracted":
+                extracted,
+
             "profile":
                 profile,
 
-            "extraction_status":
-                "pending",
+            "onboarding_complete":
+                onboarding_complete,
 
-            "message": (
-                "Transcript uploaded "
-                "successfully. "
-                "Profile extraction is "
-                "not enabled yet."
-            ),
+            "extraction_status":
+                "completed",
         }
 
 
@@ -614,29 +759,58 @@ async def upload_transcript(
     except Exception as exc:
 
         logger.exception(
-            "Unhandled transcript upload "
-            "error | session_id=%s",
+            "Unhandled academic record "
+            "upload error | "
+            "stage=%s | session_id=%s",
+            stage,
             session_id,
         )
 
         raise HTTPException(
             status_code=500,
             detail=(
-                "Internal error while "
-                "processing uploaded file."
+                "Internal academic record "
+                "processing error during "
+                f"{stage}."
             ),
         ) from exc
 
 
-# ==================================
+# =========================================================
+# Optional Alias:
+# Better endpoint name for future website integration
+# =========================================================
+
+@app.post(
+    "/session/{session_id}/academic-record"
+)
+async def upload_academic_record(
+    session_id: str,
+    file: UploadFile = File(...),
+):
+    """
+    Alias for the current transcript endpoint.
+
+    This allows the frontend team to use the clearer
+    'academic-record' name while preserving backward
+    compatibility with '/transcript'.
+    """
+
+    return await upload_transcript(
+        session_id=session_id,
+        file=file,
+    )
+
+
+# =========================================================
 # End Session
-# ==================================
+# =========================================================
 
 @app.delete(
     "/session/{session_id}"
 )
 def end_session(
-    session_id: str
+    session_id: str,
 ):
 
     session_store.clear_session(
