@@ -11,9 +11,8 @@ from .config import (
 
 class HybridLLM:
     """
-    Gemini is the primary provider.
-    Groq is used automatically if Gemini fails
-    because of quota, rate limit, timeout, or provider error.
+    Groq is the primary provider for text chat.
+    Gemini is used automatically as fallback.
     """
 
     def __init__(self):
@@ -40,22 +39,7 @@ class HybridLLM:
             )
 
     def invoke(self, input, **kwargs):
-        # Primary: Gemini
-        if self.gemini is not None:
-            try:
-                return self.gemini.invoke(
-                    input,
-                    **kwargs,
-                )
-
-            except Exception as exc:
-                print(
-                    "[LLM] Gemini failed. "
-                    f"Falling back to Groq. "
-                    f"Reason: {type(exc).__name__}"
-                )
-
-        # Fallback: Groq
+        # Primary: Groq
         if self.groq is not None:
             try:
                 return self.groq.invoke(
@@ -64,13 +48,28 @@ class HybridLLM:
                 )
 
             except Exception as exc:
+                print(
+                    "[LLM] Groq failed. "
+                    f"Falling back to Gemini. "
+                    f"Reason: {type(exc).__name__}"
+                )
+
+        # Fallback: Gemini
+        if self.gemini is not None:
+            try:
+                return self.gemini.invoke(
+                    input,
+                    **kwargs,
+                )
+
+            except Exception as exc:
                 raise RuntimeError(
                     "All LLM providers failed. "
-                    f"Groq error: {type(exc).__name__}: {exc}"
+                    f"Gemini error: {type(exc).__name__}: {exc}"
                 ) from exc
 
         raise RuntimeError(
-            "Gemini failed and Groq fallback is not configured."
+            "Groq failed and Gemini fallback is not configured."
         )
 
 

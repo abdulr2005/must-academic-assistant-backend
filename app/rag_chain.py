@@ -8,6 +8,26 @@ from .llm import llm
 from .prompts import SYSTEM_PROMPT, build_turn_prompt
 
 
+def get_retrieval_top_k(question: str) -> int:
+    q = question.lower()
+
+    registration_terms = [
+        "gpa",
+        "register",
+        "registration",
+        "اسجل",
+        "أسجل",
+        "تسجيل",
+        "كام ساعة",
+        "كم ساعة",
+    ]
+
+    if any(term in q for term in registration_terms):
+        return 2
+
+    return 3
+
+
 def retrieve_context(question: str, top_k: int = 3) -> dict:
     payload = {
         "question": question,
@@ -191,9 +211,14 @@ Latest question:
 
     return content.strip()
 
-
-def generate_answer(question: str, context: list, history: list):
+def generate_answer(
+    question: str,
+    context: list,
+    history: list,
+    profile: dict = None,
+):
     turn_prompt = build_turn_prompt(
+        student_profile=profile,
         history=history,
         context=context,
         question=question,

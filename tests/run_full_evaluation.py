@@ -119,7 +119,7 @@ def root_cause(result):
     if "http" in reason or "network" in reason or "timeout" in reason: return "timeout/network"
     if "standalone" in reason: return "query rewriting"
     if result["category"] in {"session_memory", "session_isolation"}: return "session memory"
-    if "source" in reason: return "retrieval"
+    if "source" in reason or (result["category"] == "gpa_registration" and "answer missing" in reason): return "retrieval"
     if result["category"] in {"prompt_injection", "off_topic", "fallback"}: return "prompt behavior"
     if "answer missing" in reason: return "model generation"
     return "other"
@@ -140,7 +140,8 @@ def report_markdown(cases, turns, case_results, output):
     failures = sum(r["status"] == "FAIL" for r in supported)
     manual = sum(r["status"] in {"STYLE_CHECK", "NEEDS_MANUAL_REVIEW"} for r in supported)
     latencies = [r["latency_ms"] for r in turns if r.get("http_status") is not None]
-    lines = ["# Full Agent Evaluation Report", "", "## Executive Summary", "",
+    title = "# Real-Case 50 Evaluation Report" if len(cases) == 50 else "# Full Agent Evaluation Report"
+    lines = [title, "", "## Executive Summary", "",
         f"- Total test cases: **{len(cases)}**", f"- Total turns executed: **{len(turns)}**",
         f"- Cases executed successfully (all turns HTTP 200): **{sum(r['status'] not in {'UNSUPPORTED_DATA_REQUIREMENT'} and any(t['case_id']==r['case_id'] and t.get('http_status')==200 for t in turns) for r in case_results)}**",
         f"- Supported tests: **{len(supported)}**", f"- Unsupported-data cases: **{len(cases)-len(supported)}**",
@@ -154,6 +155,10 @@ def report_markdown(cases, turns, case_results, output):
         ("Fallback accuracy", {"fallback"}, None), ("Arabic pass rate", None, {"ar"}),
         ("Egyptian Arabic pass rate", None, {"ar-eg"}), ("English pass rate", None, {"en"}),
         ("Mixed/code-switch pass rate", None, {"mixed"}), ("Typo robustness", {"typo"}, None),
+        ("GPA-rule pass rate", {"gpa_registration"}, None),
+        ("Prerequisite pass rate", {"prerequisites"}, None),
+        ("Semester-plan pass rate", {"semester_plan"}, None),
+        ("Follow-up/memory pass rate", {"follow_up", "session_memory"}, None),
         ("Prompt-injection defense", {"prompt_injection"}, None)]
     for name, cats, langs in specs:
         p, n, rate = metric(case_results, cats, langs)
@@ -201,8 +206,9 @@ def report_markdown(cases, turns, case_results, output):
         if c["support_status"] != "SUPPORTED":
             e=c["expected"]; lines.append(f"| {esc(c['turns'][0]['question'])} | {esc(e['missing_data'])} | {esc(e['recommended_integration'])} |")
     top = [r for r in case_results if r["status"] == "FAIL"][:10]
-    lines += ["", "## Recommendations", "", "- **P0:** Investigate failed retrieval/top-source checks and exact fallback violations before a demo.",
-        "- **P1:** Fix follow-up rewrite, dialect, and factual-generation failures shown above; rerun the same immutable corpus.",
+    lines += ["", "## Recommendations", "",
+        "- **P0:** Retrieve the general 18-hour semester cap together with the GPA 2.0–<3.0 policy chunk; the current top-3 context omits the general rule and produces an incomplete maximum-load answer.",
+        "- **P1:** Expose the selected LLM provider in the `/chat` response or structured telemetry so Gemini/Groq attribution does not rely on server-log inference.",
         "- **P2:** Integrate SIS, timetable, registration, and fees services for unsupported product requirements.", "",
         "### Top 10 failures", ""] + [f"{i}. `{r['case_id']}` — {r['failure_reason']}" for i,r in enumerate(top,1)]
     output.write_text("\n".join(lines), encoding="utf-8")

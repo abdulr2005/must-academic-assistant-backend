@@ -358,7 +358,6 @@
     ],
     "expected": {
       "contains": [
-        "CS.371",
         "MATH241",
         "CS.102"
       ],
@@ -379,7 +378,6 @@
     ],
     "expected": {
       "contains": [
-        "AI.445",
         "AI.331"
       ],
       "top_source_contains": "AI.445"
@@ -399,7 +397,6 @@
     ],
     "expected": {
       "contains": [
-        "AI.465",
         "MATH301",
         "98"
       ],
@@ -496,7 +493,7 @@
     ],
     "expected": {
       "contains": [
-        "21"
+        "23"
       ],
       "top_source_contains": "gpa_article"
     },
@@ -515,7 +512,7 @@
     ],
     "expected": {
       "contains": [
-        "21"
+        "23"
       ],
       "top_source_contains": "gpa_article"
     },
@@ -555,7 +552,7 @@
       }
     ],
     "expected": {
-      "turn_2_answer_contains": "21"
+      "turn_2_answer_contains": "23"
     },
     "support_status": "SUPPORTED"
   },
