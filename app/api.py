@@ -1,25 +1,25 @@
+import base64
 import logging
+import re
+from typing import Optional, List, Dict, Any
 
 from fastapi import (
     FastAPI,
     HTTPException,
     UploadFile,
     File,
+    Form,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 
-from .academic_record_parser import (
-    parse_academic_record,
-)
-
+from .academic_record_parser import parse_academic_record
 from .student_profile import (
     extract_profile_updates,
     onboarding_message,
     profile_is_ready,
     contains_arabic,
 )
-
 from .rag_chain import (
     retrieve_context,
     generate_answer,
@@ -27,30 +27,33 @@ from .rag_chain import (
     needs_conversation_context,
     get_retrieval_top_k,
 )
-
 from .session_store import session_store
 
-
-# =========================================================
-# Logging
-# =========================================================
 
 logger = logging.getLogger(__name__)
 
 
-# =========================================================
-# FastAPI
-# =========================================================
+# ==================================
+# FastAPI App & CORS
+# ==================================
 
 app = FastAPI(
     title="MUST Academic Assistant API",
-    version="3.1.1",
+    version="3.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-# =========================================================
+# ==================================
 # Request Models
-# =========================================================
+# ==================================
 
 class ChatRequest(BaseModel):
     session_id: str = Field(
@@ -58,15 +61,72 @@ class ChatRequest(BaseModel):
         min_length=8,
     )
 
-    question: str = Field(
-        ...,
-        min_length=2,
+    question: Optional[str] = Field(
+        default=None,
+        description="Text question or prompt from the student.",
+    )
+
+    image_base64: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded image or PDF string, or data URI (data:image/...;base64,...)",
+    )
+
+    image_content_type: Optional[str] = Field(
+        default="image/png",
+        description="MIME type of the image: image/jpeg, image/png, application/pdf",
     )
 
 
-# =========================================================
+def resolve_chat_input(req: ChatRequest) -> tuple:
+    """
+    Differentiates between input types:
+      - "text": Pure text question, no image.
+      - "image": Pure image provided, no text question.
+      - "multimodal": Both an image and a text question provided in the same turn.
+    """
+    image_bytes = None
+    content_type = req.image_content_type or "image/png"
+    text_question = req.question.strip() if req.question else None
+    raw_img = req.image_base64
+
+    # Support if question itself contains a data URL (e.g. data:image/png;base64,...)
+    if text_question and text_question.startswith("data:image/"):
+        raw_img = text_question
+        text_question = None
+
+    if raw_img:
+        if raw_img.startswith("data:"):
+            header, _, encoded = raw_img.partition(",")
+            if ";" in header:
+                mime_part = header.split(";")[0].replace("data:", "").strip()
+                if mime_part:
+                    content_type = mime_part
+            raw_img = encoded
+
+        try:
+            image_bytes = base64.b64decode(raw_img)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid base64 image data: {e}",
+            )
+
+    if image_bytes and text_question:
+        return ("multimodal", image_bytes, content_type, text_question)
+    elif image_bytes:
+        return ("image", image_bytes, content_type, None)
+    elif text_question:
+        return ("text", None, content_type, text_question)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide a text question or an academic record image.",
+        )
+
+
+# ==================================
 # Health
-# =========================================================
+# ==================================
 
 @app.get("/")
 @app.get("/health")
@@ -74,920 +134,381 @@ def health():
     return {
         "status": "ok",
         "service": "MUST Academic Assistant API",
-        "version": "3.1.1",
-        "vision": True,
+        "version": "3.0.0",
     }
 
 
-# =========================================================
+# ==================================
 # Chat
-# =========================================================
+# ==================================
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-
     stage = "start"
 
     try:
-
-        # =================================================
-        # 1. Load session
-        # =================================================
-
+        # 1. Load session state
         stage = "load_session"
+        history = session_store.get_history(req.session_id)
+        profile = session_store.get_profile(req.session_id)
 
-        history = session_store.get_history(
-            req.session_id
-        )
+        # 2. Differentiate Input Type (Text vs Image vs Multimodal)
+        stage = "resolve_input"
+        input_type, image_bytes, content_type, text_question = resolve_chat_input(req)
 
-        profile = session_store.get_profile(
-            req.session_id
-        )
+        extracted = None
 
-
-        # =================================================
-        # 2. Extract profile information from text
-        # =================================================
-
-        stage = "extract_profile"
-
-        updates = extract_profile_updates(
-            req.question
-        )
-
-
-        if updates.get("gpa") is not None:
-
-            session_store.update_profile(
-                req.session_id,
-                gpa=updates["gpa"],
+        # 3. Vision Extraction (if image provided)
+        if input_type in ("image", "multimodal"):
+            stage = "parse_academic_image"
+            extracted = parse_academic_record(
+                file_bytes=image_bytes,
+                content_type=content_type,
             )
 
-
-        if updates.get(
-            "completed_hours"
-        ) is not None:
-
+            # Update student profile in session store with extracted metrics
             session_store.update_profile(
                 req.session_id,
-                completed_hours=updates[
-                    "completed_hours"
-                ],
+                gpa=extracted.get("gpa"),
+                completed_hours=extracted.get("completed_hours"),
+                major=extracted.get("major"),
+                completed_courses=extracted.get("completed_courses"),
             )
+            profile = session_store.get_profile(req.session_id)
 
+            if input_type == "image":
+                stage = "image_response"
+                lines = [
+                    "✅ **Academic Record Uploaded & Analyzed!**",
+                    "",
+                    f"• **Cumulative GPA**: {profile[gpa] if profile[gpa] is not None else "N/A"}",
+                    f"• **Completed Hours**: {str(profile[completed_hours]) + " hrs" if profile[completed_hours] is not None else "N/A"}",
+                    f"• **Major**: {profile[major] or "Not specified"}",
+                ]
+                if profile.get("completed_courses"):
+                    courses_str = ", ".join(f"`{c}`" for c in profile["completed_courses"])
+                    lines.append(f"• **Completed Courses**: {courses_str}")
 
-        if updates.get("major") is not None:
+                if profile_is_ready(profile):
+                    lines.append("\nYour student session profile is now complete and active! How can I assist you with your courses, registration, or academic rules?")
+                else:
+                    missing = []
+                    if profile.get("gpa") is None: missing.append("GPA")
+                    if profile.get("completed_hours") is None: missing.append("Completed Hours")
+                    if profile.get("major") is None: missing.append("Major")
+                    lines.append(f"\nAlmost there! Please also provide: {", ".join(missing)}.")
 
-            session_store.update_profile(
-                req.session_id,
-                major=updates["major"],
-            )
+                answer = "\n".join(lines)
+                session_store.add_message(req.session_id, role="user", content="[Uploaded Academic Record Image]")
+                session_store.add_message(req.session_id, role="assistant", content=answer)
 
+                return {
+                    "session_id": req.session_id,
+                    "input_type": "image",
+                    "question": None,
+                    "answer": answer,
+                    "sources": [],
+                    "profile": profile,
+                    "extracted": extracted,
+                    "onboarding_complete": profile_is_ready(profile),
+                    "history_size": len(history) + 2,
+                }
 
-        profile = session_store.get_profile(
-            req.session_id
-        )
+        current_question = text_question
 
+        # 4. Extract personal student data from text
+        if input_type == "text":
+            stage = "extract_profile"
+            updates = extract_profile_updates(current_question)
 
-        # =================================================
-        # 3. Onboarding
-        # =================================================
+            if updates.get("gpa") is not None:
+                session_store.update_profile(req.session_id, gpa=updates["gpa"])
+            if updates.get("completed_hours") is not None:
+                session_store.update_profile(req.session_id, completed_hours=updates["completed_hours"])
+            if updates.get("major") is not None:
+                session_store.update_profile(req.session_id, major=updates["major"])
 
+            profile = session_store.get_profile(req.session_id)
+
+        # 5. Onboarding Check (Sequential 1-by-1 with language continuity)
         stage = "onboarding"
-
-        if not profile_is_ready(
-            profile
-        ):
-
+        history_is_arabic = any(
+            contains_arabic(h.get("content", ""))
+            for h in history
+        )
+        if not profile_is_ready(profile):
             answer = onboarding_message(
                 profile=profile,
-                user_text=req.question,
+                user_text=current_question,
+                history_is_arabic=history_is_arabic,
             )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="user",
-                content=req.question,
-            )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="assistant",
-                content=answer,
-            )
-
+            session_store.add_message(req.session_id, role="user", content=current_question)
+            session_store.add_message(req.session_id, role="assistant", content=answer)
 
             return {
-                "session_id":
-                    req.session_id,
-
-                "question":
-                    req.question,
-
-                "answer":
-                    answer,
-
-                "sources":
-                    [],
-
-                "profile":
-                    profile,
-
-                "onboarding_complete":
-                    False,
-
-                "history_size":
-                    len(history) + 2,
+                "session_id": req.session_id,
+                "input_type": input_type,
+                "question": current_question,
+                "answer": answer,
+                "sources": [],
+                "profile": profile,
+                "extracted": extracted,
+                "onboarding_complete": False,
+                "history_size": len(history) + 2,
             }
 
-
-        # =================================================
-        # 4. Profile-only message detection
-        # =================================================
-
-        stage = "profile_only_check"
-
-
-        profile_data_was_supplied = (
-            updates.get("gpa") is not None
-            or updates.get(
-                "completed_hours"
-            ) is not None
-            or updates.get("major") is not None
-        )
-
-
-        question_indicators = [
-            "?",
-            "؟",
-
-            # English
-            "what",
-            "how",
-            "can i",
-            "may i",
-            "which",
-            "why",
-            "when",
-            "where",
-
-            # Arabic
-            "هل",
-            "كام",
-            "كم",
-            "ايه",
-            "إيه",
-            "أقدر",
-            "اقدر",
-            "ينفع",
-            "ليه",
-            "لماذا",
-            "متى",
-            "فين",
-            "أين",
-        ]
-
-
-        question_lower = (
-            req.question
-            .lower()
-        )
-
-
-        looks_like_question = any(
-            indicator in question_lower
-            for indicator
-            in question_indicators
-        )
-
-
-        if (
-            profile_data_was_supplied
-            and not looks_like_question
-        ):
-
-            answer = onboarding_message(
-                profile=profile,
-                user_text=req.question,
+        # 6. Detect profile-only message
+        if input_type == "text":
+            stage = "profile_only_check"
+            profile_data_was_supplied = (
+                updates.get("gpa") is not None
+                or updates.get("completed_hours") is not None
+                or updates.get("major") is not None
             )
 
+            question_indicators = [
+                "?", "؟",
+                "what", "how", "can i", "may i", "which",
+                "هل", "كام", "كم", "ايه", "إيه", "أقدر", "اقدر", "ينفع",
+            ]
+            question_lower = current_question.lower()
+            looks_like_question = any(indicator in question_lower for indicator in question_indicators)
 
-            session_store.add_message(
-                req.session_id,
-                role="user",
-                content=req.question,
-            )
+            if profile_data_was_supplied and not looks_like_question:
+                answer = onboarding_message(
+                    profile=profile,
+                    user_text=current_question,
+                    history_is_arabic=history_is_arabic,
+                )
+                session_store.add_message(req.session_id, role="user", content=current_question)
+                session_store.add_message(req.session_id, role="assistant", content=answer)
 
+                return {
+                    "session_id": req.session_id,
+                    "input_type": "text",
+                    "question": current_question,
+                    "answer": answer,
+                    "sources": [],
+                    "profile": profile,
+                    "onboarding_complete": True,
+                    "history_size": len(history) + 2,
+                }
 
-            session_store.add_message(
-                req.session_id,
-                role="assistant",
-                content=answer,
-            )
-
-
-            return {
-                "session_id":
-                    req.session_id,
-
-                "question":
-                    req.question,
-
-                "answer":
-                    answer,
-
-                "sources":
-                    [],
-
-                "profile":
-                    profile,
-
-                "onboarding_complete":
-                    True,
-
-                "history_size":
-                    len(history) + 2,
-            }
-
-
-        # =================================================
-        # 5. Ambiguous follow-up protection
-        # =================================================
-
+        # 7. Ambiguous follow-up protection
         stage = "followup_validation"
-
-
-        if (
-            not history
-            and needs_conversation_context(
-                req.question
-            )
-        ):
-
-            if contains_arabic(
-                req.question
-            ):
-
-                answer = (
-                    "تقصد أي مادة أو موضوع؟"
-                )
-
-            else:
-
-                answer = (
-                    "Which course or subject "
-                    "do you mean?"
-                )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="user",
-                content=req.question,
-            )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="assistant",
-                content=answer,
-            )
-
+        if not history and needs_conversation_context(current_question):
+            answer = "Which course or subject do you mean?"
+            session_store.add_message(req.session_id, role="user", content=current_question)
+            session_store.add_message(req.session_id, role="assistant", content=answer)
 
             return {
-                "session_id":
-                    req.session_id,
-
-                "question":
-                    req.question,
-
-                "standalone_question":
-                    req.question,
-
-                "answer":
-                    answer,
-
-                "sources":
-                    [],
-
-                "profile":
-                    profile,
-
-                "onboarding_complete":
-                    True,
-
-                "history_size":
-                    len(history) + 2,
+                "session_id": req.session_id,
+                "input_type": input_type,
+                "question": current_question,
+                "standalone_question": current_question,
+                "answer": answer,
+                "sources": [],
+                "profile": profile,
+                "extracted": extracted,
+                "onboarding_complete": True,
+                "history_size": len(history) + 2,
             }
 
-
-        # =================================================
-        # 6. Rewrite follow-up
-        # =================================================
-
+        # 8. Rewrite follow-up question
         stage = "rewrite_question"
-
-
-        standalone_question = (
-            rewrite_question(
-                question=req.question,
-                history=history,
-            )
+        standalone_question = rewrite_question(
+            question=current_question,
+            history=history,
         )
 
-
-        # =================================================
-        # 7. RAG Retrieval
-        # =================================================
-
+        # 9. Retrieve RAG context
         stage = "rag_retrieval"
-
-
-        top_k = get_retrieval_top_k(
-            standalone_question
+        top_k = get_retrieval_top_k(standalone_question)
+        retrieved = retrieve_context(
+            question=standalone_question,
+            top_k=top_k,
+            profile=profile,
         )
+        context = retrieved["context"]
 
-
-        try:
-
-            retrieved = retrieve_context(
-                question=standalone_question,
-                top_k=top_k,
-                profile=profile,
-            )
-
-
-        except RuntimeError as exc:
-
-            logger.warning(
-                "RAG temporarily unavailable | "
-                "session_id=%s | error=%s",
-                req.session_id,
-                exc,
-            )
-
-
-            # =============================================
-            # Graceful degradation
-            # =============================================
-
-            if contains_arabic(
-                req.question
-            ):
-
-                answer = (
-                    "خدمة المعلومات الأكاديمية "
-                    "غير متاحة مؤقتًا. "
-                    "حاول مرة ثانية بعد لحظات."
-                )
-
-            else:
-
-                answer = (
-                    "The academic knowledge service "
-                    "is temporarily unavailable. "
-                    "Please try again in a moment."
-                )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="user",
-                content=req.question,
-            )
-
-
-            session_store.add_message(
-                req.session_id,
-                role="assistant",
-                content=answer,
-            )
-
-
-            return {
-                "session_id":
-                    req.session_id,
-
-                "question":
-                    req.question,
-
-                "standalone_question":
-                    standalone_question,
-
-                "answer":
-                    answer,
-
-                "sources":
-                    [],
-
-                "profile":
-                    profile,
-
-                "onboarding_complete":
-                    True,
-
-                "history_size":
-                    len(history) + 2,
-
-                "service_status":
-                    "rag_temporarily_unavailable",
-            }
-
-
-        context = retrieved[
-            "context"
-        ]
-
-
-        # =================================================
-        # 8. Generate answer
-        # =================================================
-
+        # 10. Generate personalized answer
         stage = "answer_generation"
-
-
         if not context:
-
-            if contains_arabic(
-                req.question
-            ):
-
-                answer = (
-                    "المعلومات الأكاديمية المتاحة "
-                    "غير كافية للإجابة على هذا "
-                    "السؤال بدقة."
-                )
-
-            else:
-
-                answer = (
-                    "The available academic "
-                    "information is not sufficient "
-                    "to answer this question "
-                    "accurately."
-                )
-
-
+            answer = (
+                "The available academic information is not sufficient "
+                "to answer this question accurately."
+            )
         else:
-
             answer = generate_answer(
-                question=req.question,
+                question=current_question,
                 context=context,
                 history=history,
                 profile=profile,
             )
 
+        if input_type == "multimodal" and extracted:
+            header_note = (
+                f"📄 *Academic record processed (GPA: {profile.get("gpa")}, "
+                f"Hours: {profile.get("completed_hours")}, Major: {profile.get("major")})*\n\n"
+            )
+            answer = header_note + answer
 
-        # =================================================
-        # 9. Save conversation
-        # =================================================
-
+        # 11. Save conversation
         stage = "save_conversation"
+        user_msg = f"[With Academic Record Image] {current_question}" if input_type == "multimodal" else current_question
+        session_store.add_message(req.session_id, role="user", content=user_msg)
+        session_store.add_message(req.session_id, role="assistant", content=answer)
 
-
-        session_store.add_message(
-            req.session_id,
-            role="user",
-            content=req.question,
-        )
-
-
-        session_store.add_message(
-            req.session_id,
-            role="assistant",
-            content=answer,
-        )
-
-
-        # =================================================
-        # 10. Response
-        # =================================================
-
+        # 12. Response
         stage = "response"
-
-
         return {
-            "session_id":
-                req.session_id,
-
-            "question":
-                req.question,
-
-            "standalone_question":
-                standalone_question,
-
-            "answer":
-                answer,
-
-            "sources":
-                retrieved["sources"],
-
-            "profile":
-                profile,
-
-            "onboarding_complete":
-                True,
-
-            "history_size":
-                len(history) + 2,
-
-            "service_status":
-                "ok",
+            "session_id": req.session_id,
+            "input_type": input_type,
+            "question": current_question,
+            "standalone_question": standalone_question,
+            "answer": answer,
+            "sources": retrieved.get("sources", []),
+            "profile": profile,
+            "extracted": extracted,
+            "onboarding_complete": True,
+            "history_size": len(history) + 2,
         }
 
-
+    except HTTPException:
+        raise
     except Exception as exc:
-
-        logger.exception(
-            "Unhandled /chat error | "
-            "stage=%s | session_id=%s",
-            stage,
-            req.session_id,
-        )
-
-
+        logger.exception("Unhandled /chat error | stage=%s | session_id=%s", stage, req.session_id)
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Internal agent error during "
-                f"{stage}."
-            ),
+            detail=f"Internal agent error during {stage}.",
         ) from exc
 
 
-# =========================================================
+# ==================================
 # Academic Record Upload
-# =========================================================
+# ==================================
 
-@app.post(
-    "/session/{session_id}/transcript"
-)
-async def upload_transcript(
-    session_id: str,
-    file: UploadFile = File(...),
-):
-
+async def _process_uploaded_transcript(session_id: str, file: UploadFile) -> dict:
     stage = "start"
-
     try:
-
-        # =================================================
-        # 1. Validate file type
-        # =================================================
-
-        stage = "validate_file_type"
-
-
+        stage = "validate_type"
         allowed_content_types = {
             "image/jpeg",
+            "image/jpg",
             "image/png",
             "application/pdf",
         }
 
-
-        if (
-            file.content_type
-            not in allowed_content_types
-        ):
-
+        if file.content_type not in allowed_content_types:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Unsupported file type. "
-                    "Please upload JPG, "
-                    "PNG, or PDF."
-                ),
+                detail="Unsupported file type. Please upload JPG, PNG, or PDF.",
             )
-
-
-        # =================================================
-        # 2. Read file
-        # =================================================
 
         stage = "read_file"
-
-
         file_bytes = await file.read()
-
-
         if not file_bytes:
-
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Uploaded file is empty."
-                ),
+                detail="Uploaded file is empty.",
             )
 
-
-        # =================================================
-        # 3. Validate size
-        # =================================================
-
-        stage = "validate_file_size"
-
-
-        max_size = (
-            10
-            * 1024
-            * 1024
-        )
-
-
+        max_size = 10 * 1024 * 1024
         if len(file_bytes) > max_size:
-
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "File is too large. "
-                    "Maximum allowed size "
-                    "is 10 MB."
-                ),
+                detail="File is too large. Maximum allowed size is 10 MB.",
             )
 
-
-        # =================================================
-        # 4. Ensure session exists
-        # =================================================
-
-        stage = "ensure_session"
-
-
-        session_store.update_profile(
-            session_id
+        stage = "parse_record"
+        extracted = parse_academic_record(
+            file_bytes=file_bytes,
+            content_type=file.content_type,
         )
-
-
-        # =================================================
-        # 5. Vision extraction
-        # =================================================
-
-        stage = "vision_extraction"
-
-
-        extracted = await run_in_threadpool(
-            parse_academic_record,
-            file_bytes,
-            file.content_type,
-        )
-
-
-        # =================================================
-        # 6. Validate parser contract
-        # =================================================
-
-        stage = "validate_extraction"
-
-
-        if not isinstance(
-            extracted,
-            dict,
-        ):
-
-            raise RuntimeError(
-                "Vision parser returned "
-                "an invalid response type."
-            )
-
-
-        expected_fields = {
-            "gpa",
-            "completed_hours",
-            "major",
-            "completed_courses",
-        }
-
-
-        missing_keys = (
-            expected_fields
-            - set(extracted.keys())
-        )
-
-
-        if missing_keys:
-
-            raise RuntimeError(
-                "Vision parser response is "
-                "missing required keys: "
-                + ", ".join(
-                    sorted(missing_keys)
-                )
-            )
-
-
-        # =================================================
-        # 7. Update student session profile
-        # =================================================
 
         stage = "update_profile"
-
-
-        update_kwargs = {}
-
-
-        # GPA
-        if extracted.get(
-            "gpa"
-        ) is not None:
-
-            update_kwargs[
-                "gpa"
-            ] = extracted[
-                "gpa"
-            ]
-
-
-        # Completed Hours
-        if extracted.get(
-            "completed_hours"
-        ) is not None:
-
-            update_kwargs[
-                "completed_hours"
-            ] = extracted[
-                "completed_hours"
-            ]
-
-
-        # Major
-        if extracted.get(
-            "major"
-        ) is not None:
-
-            update_kwargs[
-                "major"
-            ] = extracted[
-                "major"
-            ]
-
-
-        # Completed Courses
-        completed_courses = (
-            extracted.get(
-                "completed_courses"
-            )
+        session_store.update_profile(
+            session_id,
+            gpa=extracted.get("gpa"),
+            completed_hours=extracted.get("completed_hours"),
+            major=extracted.get("major"),
+            completed_courses=extracted.get("completed_courses"),
         )
 
+        profile = session_store.get_profile(session_id)
 
-        if isinstance(
-            completed_courses,
-            list,
-        ) and completed_courses:
-
-            update_kwargs[
-                "completed_courses"
-            ] = completed_courses
-
-
-        if update_kwargs:
-
-            session_store.update_profile(
-                session_id,
-                **update_kwargs,
-            )
-
-
-        # =================================================
-        # 8. Reload updated profile
-        # =================================================
-
-        stage = "reload_profile"
-
-
-        profile = (
-            session_store.get_profile(
-                session_id
-            )
+        session_store.add_message(
+            session_id,
+            role="user",
+            content=f"[Uploaded transcript: {file.filename}]",
         )
-
-
-        # =================================================
-        # 9. Determine onboarding state
-        # =================================================
-
-        stage = "profile_status"
-
-
-        onboarding_complete = (
-            profile_is_ready(
-                profile
-            )
+        session_store.add_message(
+            session_id,
+            role="assistant",
+            content=(
+                f"Extracted academic record: GPA={profile.get("gpa")}, "
+                f"Hours={profile.get("completed_hours")}, Major={profile.get("major")}"
+            ),
         )
-
-
-        # =================================================
-        # 10. Response
-        # =================================================
-
-        stage = "response"
-
 
         return {
-            "status":
-                "processed",
-
-            "session_id":
-                session_id,
-
+            "status": "success",
+            "session_id": session_id,
+            "input_type": "image",
             "file": {
-                "filename":
-                    file.filename,
-
-                "content_type":
-                    file.content_type,
-
-                "size_bytes":
-                    len(file_bytes),
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size_bytes": len(file_bytes),
             },
-
-            "extracted":
-                extracted,
-
-            "profile":
-                profile,
-
-            "onboarding_complete":
-                onboarding_complete,
-
-            "extraction_status":
-                "completed",
-
-            "service_status":
-                "ok",
+            "extracted": extracted,
+            "profile": profile,
+            "onboarding_complete": profile_is_ready(profile),
+            "message": "Academic record parsed and profile updated successfully.",
         }
-
 
     except HTTPException:
         raise
-
-
     except Exception as exc:
-
-        logger.exception(
-            "Unhandled academic record "
-            "upload error | "
-            "stage=%s | session_id=%s",
-            stage,
-            session_id,
-        )
-
-
+        logger.exception("Unhandled transcript upload error | stage=%s | session_id=%s", stage, session_id)
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Internal academic record "
-                "processing error during "
-                f"{stage}."
-            ),
+            detail=f"Internal error while processing uploaded file during {stage}.",
         ) from exc
 
 
-# =========================================================
-# Academic Record Alias
-# =========================================================
-
-@app.post(
-    "/session/{session_id}/academic-record"
-)
-async def upload_academic_record(
+@app.post("/session/{session_id}/transcript")
+async def upload_transcript_path(
     session_id: str,
     file: UploadFile = File(...),
 ):
-    """
-    Preferred frontend endpoint for Academic Record upload.
-
-    The older /transcript endpoint remains available
-    for backward compatibility.
-    """
-
-    return await upload_transcript(
-        session_id=session_id,
-        file=file,
-    )
+    return await _process_uploaded_transcript(session_id=session_id, file=file)
 
 
-# =========================================================
-# End Session
-# =========================================================
-
-@app.delete(
-    "/session/{session_id}"
-)
-def end_session(
+@app.post("/session/{session_id}/academic-record")
+async def upload_academic_record_alias(
     session_id: str,
+    file: UploadFile = File(...),
 ):
-
-    session_store.clear_session(
-        session_id
-    )
+    """Alias endpoint for /transcript preferred by frontend."""
+    return await _process_uploaded_transcript(session_id=session_id, file=file)
 
 
+@app.post("/upload-record")
+async def upload_transcript_form(
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    return await _process_uploaded_transcript(session_id=session_id, file=file)
+
+
+# ==================================
+# End Session
+# ==================================
+
+@app.delete("/session/{session_id}")
+def end_session(session_id: str):
+    session_store.clear_session(session_id)
     return {
-        "status":
-            "ended",
-
-        "session_id":
-            session_id,
+        "status": "ended",
+        "session_id": session_id,
     }

@@ -194,51 +194,40 @@ current GPA.
 COMPLETED HOURS
 ============================================================
 
-"completed_hours" means the total credit hours the
-student has ALREADY completed, passed, earned or finished.
+"completed_hours" means the student's completed credit hours (ساعات معتمدة).
 
-Examples:
+CRITICAL UNDERSTANDING OF HOURS / SYNONYMS:
+Students frequently use:
+"hours", "hour", "credit hours", "credits", "cr hrs", "ساعة", "ساعات", "ساعه"
+ALL OF THESE MEAN COMPLETED CREDIT HOURS in this academic advising context!
 
-"I completed 108 credit hours"
-"I've finished 70 hours"
-"I have completed 90 credits"
-"My completed hours are 108"
-"My credit hours are 108"
-"I currently have 108 completed hours"
+Examples that MUST extract completed_hours:
 
-"خلصت 108 ساعة"
-"مخلص 70 ساعة"
-"أنا مخلص 90"
-"ساعاتي اللي خلصتها 108"
-"عديت 108 ساعة"
-"أنا عندي 70 ساعة مخلصة"
-
-"ana 5alast 108 sa3a"
-"5alast 70 credit hours"
-"ana mkhlas 90 sa3a"
-
-These should extract completed_hours.
+"I completed 108 credit hours" -> completed_hours = 108
+"108 hours" -> completed_hours = 108
+"108 credit hours" -> completed_hours = 108
+"108 credits" -> completed_hours = 108
+"108" -> completed_hours = 108
+"30 and ai" -> completed_hours = 30, major = "AI"
+"30" -> completed_hours = 30
+"30ساعه" or "30 ساعة" -> completed_hours = 30
+"ساعاتي 30" or "ساعاتي 70" -> completed_hours = 30 or 70
+"ساعاتي اللي خلصتها 108" -> completed_hours = 108
+"خلصت 108 ساعة" -> completed_hours = 108
+"مخلص 70 ساعة" -> completed_hours = 70
+"أنا مخلص 90" -> completed_hours = 90
+"I currently have 108 completed hours" -> completed_hours = 108
+"my hours are 108" -> completed_hours = 108
+"hours: 108" -> completed_hours = 108
 
 IMPORTANT:
-
-Registration hours are NOT completed hours.
-
+ONLY return completed_hours = null if the student is asking to REGISTER future hours:
 Examples:
-
-"Can I register 18 hours?"
-"Can I take 21 credits?"
-"How many hours can I register?"
-"Is 15 hours allowed?"
-"Can I register more than 18 hours?"
-
-"اقدر اسجل 18 ساعة؟"
-"ينفع اخد 21 ساعة؟"
-"كم ساعة اقدر اسجل؟"
-"هل مسموح لي 15 ساعة؟"
-
-For all of these:
-
-completed_hours = null
+"Can I register 18 hours?" -> completed_hours = null (asking about future registration load)
+"Can I take 21 credits?" -> completed_hours = null (asking about future registration load)
+"How many hours can I register?" -> completed_hours = null (asking about registration limit)
+"اقدر اسجل 18 ساعة؟" -> completed_hours = null
+"كم ساعة اقدر اسجل؟" -> completed_hours = null
 
 
 ============================================================
@@ -347,26 +336,19 @@ Return:
 
 
 ============================================================
-CONVERSATIONAL REPLIES
+CONVERSATIONAL & SHORT REPLIES
 ============================================================
 
-The user may answer a question with a very short reply.
+Students often answer onboarding questions with short, direct values:
+- "30 and ai" -> {{"gpa": null, "completed_hours": 30, "major": "AI"}}
+- "108" -> {{"gpa": null, "completed_hours": 108, "major": null}}
+- "108 hours" -> {{"gpa": null, "completed_hours": 108, "major": null}}
+- "30" -> {{"gpa": null, "completed_hours": 30, "major": null}}
+- "30ساعه" or "30 ساعة" -> {{"gpa": null, "completed_hours": 30, "major": null}}
+- "3.2" -> {{"gpa": 3.2, "completed_hours": null, "major": null}}
+- "AI" -> {{"gpa": null, "completed_hours": null, "major": "AI"}}
 
-However, this parser receives ONLY the current message.
-
-Therefore:
-
-If a bare value has no clear meaning by itself,
-do NOT guess.
-
-Example:
-
-"108"
-
-Return null fields unless the meaning is explicitly clear
-from the message itself.
-
-Never invent profile information.
+Do NOT return null for these clear short values. An integer between 10 and 160 provided by the student in this onboarding context is their completed_hours.
 
 
 ============================================================
@@ -466,12 +448,8 @@ def extract_profile_fallback(text: str) -> dict:
     # -----------------------------------------------------
 
     gpa_patterns = [
-        r"\b(?:gpa|cgpa)\s*(?:is|=|:)?\s*"
-        r"(\d(?:\.\d{1,2})?)\b",
-
-        r"(?:معدلي|معدلى|المعدل(?:\s+التراكمي)?)"
-        r"\s*(?:هو|=|:)?\s*"
-        r"(\d(?:\.\d{1,2})?)",
+        r"\b(?:gpa|cgpa)\s*(?:is|=|:)?\s*(\d(?:\.\d{1,2})?)\b",
+        r"(?:معدلي|معدلى|المعدل(?:\s+التراكمي)?)\s*(?:هو|=|:)?\s*(\d(?:\.\d{1,2})?)",
     ]
 
     for pattern in gpa_patterns:
@@ -480,80 +458,89 @@ def extract_profile_fallback(text: str) -> dict:
             text,
             flags=re.IGNORECASE,
         )
-
         if match:
-            result["gpa"] = validate_gpa(
-                match.group(1)
-            )
+            result["gpa"] = validate_gpa(match.group(1))
             break
+
+    if result["gpa"] is None:
+        bare_gpa = re.fullmatch(r"\s*([0-4](?:\.\d{1,2})?)\s*", text)
+        if bare_gpa:
+            result["gpa"] = validate_gpa(bare_gpa.group(1))
 
     # -----------------------------------------------------
     # Completed Hours
     # -----------------------------------------------------
-
-    hours_patterns = [
-        r"(?:completed|finished|passed|earned)"
-        r"\s*(\d{1,3})"
-        r"\s*(?:credit\s*hours?|credits?|hours?)",
-
-        r"(?:خلصت|مخلص|مخلّص|أنهيت|انهيت|اجتزت)"
-        r"\s*(\d{1,3})"
-        r"\s*(?:ساعة|ساعه|ساعات)?",
-    ]
-
-    for pattern in hours_patterns:
-        match = re.search(
-            pattern,
+    # Exclude questions asking about future registration load (e.g. Can I register 18 hours?)
+    is_reg_query = bool(
+        re.search(
+            r"(?:register|take|enroll\s*in|اسجل|أسجل|تسجيل|اخد|آخذ)\s*(?:more\s+than\s+)?(\d{1,3})",
             text,
             flags=re.IGNORECASE,
         )
+    )
 
-        if match:
-            result["completed_hours"] = (
-                validate_completed_hours(
-                    match.group(1)
-                )
-            )
-            break
+    if not is_reg_query:
+        # Combined hours + major (e.g. "30 and ai", "30 و ai", "108 cs")
+        comb = re.search(
+            r"\b(\d{1,3})\s*(?:and|&|و)?\s*(ai|cs|is|general|ذكاء\s*اصطناعي|علوم\s*حاسب|نظم\s*معلومات)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if comb:
+            result["completed_hours"] = validate_completed_hours(comb.group(1))
+            result["major"] = validate_major(comb.group(2))
+
+        if result["completed_hours"] is None:
+            hours_patterns = [
+                r"(?:completed|finished|passed|earned)\s*(\d{1,3})\s*(?:credit\s*hours?|credits?|hours?)?",
+                r"(?:خلصت|مخلص|مخلّص|أنهيت|انهيت|اجتزت)\s*(\d{1,3})\s*(?:ساعة|ساعه|ساعات)?",
+                r"(?:ساعات|ساعاتي|الساعات|ساعة|ساعه)\s*[:=]?\s*(\d{1,3})",
+                r"\b(\d{1,3})\s*(?:credit\s*hours?|credits?|hours?|hrs?)\b",
+                r"(\d{1,3})\s*(?:ساعة|ساعه|ساعات)",
+            ]
+            for pattern in hours_patterns:
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    result["completed_hours"] = validate_completed_hours(match.group(1))
+                    break
+
+        # Bare integer hours (e.g. "30", "108")
+        if result["completed_hours"] is None:
+            bare_num = re.fullmatch(r"\s*(\d{1,3})\s*", text)
+            if bare_num:
+                result["completed_hours"] = validate_completed_hours(bare_num.group(1))
 
     # -----------------------------------------------------
     # Major
     # -----------------------------------------------------
+    if result["major"] is None:
+        major_patterns = [
+            (
+                r"(?:my\s+major\s+is|تخصصي)\s*(?:ai|artificial intelligence|ذكاء اصطناعي|الذكاء الاصطناعي)",
+                "AI",
+            ),
+            (
+                r"(?:my\s+major\s+is|تخصصي)\s*(?:cs|computer science|علوم حاسب|علوم الحاسب)",
+                "CS",
+            ),
+            (
+                r"(?:my\s+major\s+is|تخصصي)\s*(?:is|information systems?|نظم معلومات|نظم المعلومات)",
+                "IS",
+            ),
+            (
+                r"(?:my\s+major\s+is|تخصصي)\s*(?:general|undeclared|عام|جنرال)",
+                "General",
+            ),
+            (r"\b(ai|artificial intelligence|ذكاء\s*اصطناعي|الذكاء\s*الاصطناعي)\b", "AI"),
+            (r"\b(cs|computer science|علوم\s*حاسب|علوم\s*الحاسب)\b", "CS"),
+            (r"\b(is|information systems?|نظم\s*معلومات|نظم\s*المعلومات)\b", "IS"),
+            (r"\b(general|undeclared|عام|جنرال)\b", "General"),
+        ]
 
-    major_patterns = [
-        (
-            r"(?:my\s+major\s+is|تخصصي)"
-            r"\s*(?:ai|artificial intelligence|"
-            r"ذكاء اصطناعي|الذكاء الاصطناعي)",
-            "AI",
-        ),
-        (
-            r"(?:my\s+major\s+is|تخصصي)"
-            r"\s*(?:cs|computer science|"
-            r"علوم حاسب|علوم الحاسب)",
-            "CS",
-        ),
-        (
-            r"(?:my\s+major\s+is|تخصصي)"
-            r"\s*(?:is|information systems?|"
-            r"نظم معلومات|نظم المعلومات)",
-            "IS",
-        ),
-        (
-            r"(?:my\s+major\s+is|تخصصي)"
-            r"\s*(?:general|undeclared|عام|جنرال)",
-            "General",
-        ),
-    ]
-
-    for pattern, major in major_patterns:
-        if re.search(
-            pattern,
-            text,
-            flags=re.IGNORECASE,
-        ):
-            result["major"] = major
-            break
+        for pattern, major in major_patterns:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                result["major"] = major
+                break
 
     return result
 
@@ -651,6 +638,12 @@ def contains_arabic(text: str) -> bool:
     )
 
 
+def is_neutral_input(text: str) -> bool:
+    """True if input is purely digits, punctuation, or bare major tokens like '3.5', '30', 'ai'."""
+    cleaned = re.sub(r"[\d\.\s\:\-\,\/\%]", "", text.lower())
+    return cleaned in ("", "ai", "cs", "is", "general")
+
+
 # =========================================================
 # Onboarding Messages
 # =========================================================
@@ -658,6 +651,7 @@ def contains_arabic(text: str) -> bool:
 def onboarding_message(
     profile: dict,
     user_text: str = "",
+    history_is_arabic: bool = False,
 ) -> str:
 
     missing = get_missing_profile_fields(
@@ -667,6 +661,10 @@ def onboarding_message(
     arabic = contains_arabic(
         user_text
     )
+
+    # If user replies with neutral digits/codes (e.g. 3.5, 30, AI), preserve conversation language
+    if not arabic and history_is_arabic and is_neutral_input(user_text):
+        arabic = True
 
     # -----------------------------------------------------
     # Complete
@@ -686,75 +684,43 @@ def onboarding_message(
         )
 
     # -----------------------------------------------------
-    # Arabic
+    # Arabic - Sequential One-by-One Onboarding
     # -----------------------------------------------------
 
     if arabic:
-        lines = []
-
-        if len(missing) == 3:
-            lines.append(
-                "أهلًا بك في المساعد الأكاديمي لـ MUST 👋"
-            )
-            lines.append(
-                "قبل ما نبدأ، زودني من فضلك بـ:"
-            )
-        else:
-            lines.append(
-                "تمام، باقي بس أحتاج منك:"
-            )
-
         if "gpa" in missing:
-            lines.append(
-                "• المعدل التراكمي (GPA)"
-            )
+            if len(missing) == 3:
+                return (
+                    "أهلًا بك في المساعد الأكاديمي لـ MUST 👋\n"
+                    "ممكن تبعت الـ GPA بتاعك؟"
+                )
+            return "تمام، ممكن تبعت الـ GPA بتاعك؟"
 
         if "completed_hours" in missing:
-            lines.append(
-                "• عدد الساعات المعتمدة التي أنهيتها"
-            )
+            return "تمام! كم عدد الساعات المعتمدة اللي خلصتها حتى الآن؟"
 
         if "major" in missing:
-            lines.append(
-                "• تخصصك الحالي: AI أو CS أو IS أو General"
-            )
-
-        return "\n".join(lines)
+            return "تمام! إيه تخصصك الحالي: AI أو CS أو IS أو General؟"
 
     # -----------------------------------------------------
-    # English / Other
+    # English / Other - Sequential One-by-One Onboarding
     # -----------------------------------------------------
-
-    lines = []
-
-    if len(missing) == 3:
-        lines.append(
-            "Welcome to the MUST Academic Assistant 👋"
-        )
-        lines.append(
-            "Before we begin, please provide:"
-        )
-    else:
-        lines.append(
-            "Thanks. I still need:"
-        )
 
     if "gpa" in missing:
-        lines.append(
-            "• Your current GPA"
-        )
+        if len(missing) == 3:
+            return (
+                "Welcome to MUST Academic Assistant 👋\n"
+                "Could you please provide your current cumulative GPA (e.g., 3.2)?"
+            )
+        return "Got it. Could you please provide your current GPA?"
 
     if "completed_hours" in missing:
-        lines.append(
-            "• The number of credit hours you have completed"
-        )
+        return "Thanks! How many credit hours have you completed so far?"
 
     if "major" in missing:
-        lines.append(
-            "• Your current major: AI, CS, IS, or General"
-        )
+        return "Almost there! What is your current major (AI, CS, IS, or General)?"
 
-    return "\n".join(lines)
+    return "Your student profile is active! How can I assist you today?"
 
 
 # =========================================================

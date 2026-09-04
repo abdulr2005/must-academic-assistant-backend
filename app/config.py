@@ -37,6 +37,18 @@ RAG_API_URL = os.getenv(
 ).strip()
 
 
+# OpenRouter Vision Parser
+OPENROUTER_API_KEY = os.getenv(
+    "OPENROUTER_API_KEY",
+    ""
+).strip()
+
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL",
+    "openrouter/free"
+).strip()
+
+
 def require_env(*names: str) -> None:
     values = {
         "GEMINI_API_KEY": GEMINI_API_KEY,

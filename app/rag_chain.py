@@ -259,6 +259,66 @@ def filter_registration_results(
     ]
 
 
+from pathlib import Path
+import json
+
+_CHUNKS_CACHE = None
+
+def _load_local_chunks():
+    global _CHUNKS_CACHE
+    if _CHUNKS_CACHE is not None:
+        return _CHUNKS_CACHE
+    chunks_path = Path(__file__).resolve().parent / "chunks_final.json"
+    if not chunks_path.exists():
+        chunks_path = Path(__file__).resolve().parents[2] / "must-rag-api-main" / "chunks_final.json"
+    if chunks_path.exists():
+        loaded = []
+        with open(chunks_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    loaded.append(json.loads(line))
+        _CHUNKS_CACHE = loaded
+        return loaded
+    return []
+
+def _fallback_local_search(question: str, top_k: int) -> list:
+    chunks = _load_local_chunks()
+    if not chunks:
+        return []
+    q_words = set(re.findall(r'[\w\.]+', question.lower()))
+    scored = []
+    for c in chunks:
+        text = c.get("chunk_text", "")
+        metadata = c.get("metadata", {})
+        score = 0.0
+        course_code = metadata.get("course_code")
+        if course_code and course_code.lower() in question.lower():
+            score += 5.0
+        chunk_id = c.get("chunk_id", "")
+        if chunk_id and any(w in chunk_id.lower() for w in q_words if len(w) > 2):
+            score += 2.0
+        for w in q_words:
+            if len(w) >= 2 and w in text.lower():
+                score += 1.0
+        if is_registration_load_question(question) and c.get("doc_type") == "gpa_article":
+            score += 3.0
+        if score > 0:
+            scored.append((score, {
+                "text": text,
+                "score": score,
+                "metadata": {
+                    "chunk_id": chunk_id,
+                    "doc_type": c.get("doc_type"),
+                    "major": c.get("major"),
+                    "semester": c.get("semester"),
+                    "confidence": c.get("confidence", "verified"),
+                }
+            }))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in scored[:top_k]]
+
+
 # =========================================================
 # RAG Request With Retry
 # =========================================================
@@ -437,22 +497,13 @@ def retrieve_context(
     # =====================================================
 
     if registration_load:
-
-        profile_gpa = get_profile_gpa(
-            profile
-        )
-
+        profile_gpa = get_profile_gpa(profile)
         if profile_gpa is not None:
-
             retrieval_question = (
                 f"{question}\n"
                 f"Student current GPA: "
                 f"{profile_gpa:.2f}"
             )
-
-    # =====================================================
-    # Wider candidate pool
-    # =====================================================
 
     request_top_k = (
         max(
@@ -466,23 +517,24 @@ def retrieve_context(
     payload = {
         "question":
             retrieval_question,
-
         "top_k":
             request_top_k,
     }
 
     # =====================================================
-    # Request RAG API
+    # Request RAG API with Retry and Local Fallback
     # =====================================================
-
-    data = _request_rag(
-        payload
-    )
-
-    results = data.get(
-        "results",
-        [],
-    )
+    results = []
+    try:
+        data = _request_rag(payload)
+        results = data.get("results", [])
+    except Exception as exc:
+        print(f"[RAG] Remote RAG request failed ({exc}). Using local chunks fallback.")
+        results = _fallback_local_search(retrieval_question, request_top_k)
+        if not results:
+            raise RuntimeError(
+                f"RAG API request failed and no local chunks available: {exc}"
+            ) from exc
 
     if not isinstance(
         results,
