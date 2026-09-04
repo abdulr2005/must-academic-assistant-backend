@@ -58,6 +58,97 @@ def is_registration_load_question(
     )
 
 
+def is_remaining_graduation_hours_question(
+    question: str,
+) -> bool:
+    """Detect requests for a student's remaining degree credit hours."""
+
+    q = question.lower().strip()
+
+    patterns = [
+        r"how many (?:credit )?hours (?:do i have )?left (?:to|until) graduat",
+        r"remaining (?:credit )?hours.*graduat",
+        r"hours.*remaining.*graduat",
+        r"(?:فاضلي|باقي|متبقي(?:ة)?)\s+كام\s+ساعة.*(?:للتخرج|التخرج)",
+        r"كم\s+ساعة\s+متبقية.*(?:للتخرج|التخرج)",
+        r"ساعات\s+التخرج\s+المتبقية",
+    ]
+
+    return any(
+        re.search(pattern, q, flags=re.IGNORECASE)
+        for pattern in patterns
+    )
+
+
+def is_major_curriculum_question(
+    question: str,
+) -> bool:
+    """Detect plan/elective questions whose sources are major-specific."""
+
+    q = question.lower().strip()
+
+    patterns = [
+        r"semester\s*\d+",
+        r"courses?.*(?:in|for)\s+semester",
+        r"semester.*courses?",
+        r"study plan",
+        r"curriculum",
+        r"major.*electives?",
+        r"electives?.*(?:major|speciali[sz]ation)",
+        r"مواد\s+(?:ال)?ترم",
+        r"مواد\s+الفصل",
+        r"الخطة\s+الدراسية",
+        r"مواد\s+تخصص",
+        r"اختياري.*تخصص",
+    ]
+
+    return any(
+        re.search(pattern, q, flags=re.IGNORECASE)
+        for pattern in patterns
+    )
+
+
+def is_narrow_course_identity_question(
+    question: str,
+) -> bool:
+    """Match generic course-identity questions, excluding attribute queries."""
+
+    q = question.lower().strip()
+    course_code = r"[a-z]{2,5}[.\- ]?\d{3}"
+
+    if not re.search(course_code, q, flags=re.IGNORECASE):
+        return False
+
+    excluded_attributes = (
+        "prerequisite",
+        "prereq",
+        "credit hour",
+        "hours",
+        "semester",
+        "level",
+        "elective",
+        "compulsory",
+        "متطلب",
+        "ساعات",
+        "ساعة",
+        "ترم",
+        "فصل",
+        "اختياري",
+        "إجباري",
+    )
+
+    if any(attribute in q for attribute in excluded_attributes):
+        return False
+
+    return bool(
+        re.fullmatch(
+            rf"\s*(?:what is|what's|tell me about|ما هي|ما هو|ايه|إيه)\s+{course_code}\s*[?.؟]*\s*",
+            q,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 # =========================================================
 # GPA Helpers
 # =========================================================
@@ -136,12 +227,121 @@ def get_retrieval_top_k(
     question: str,
 ) -> int:
 
+    if is_remaining_graduation_hours_question(
+        question
+    ):
+        return 3
+
     if is_registration_load_question(
         question
     ):
         return 2
 
     return 3
+
+
+def _profile_major(profile: dict = None):
+    if not profile:
+        return None
+
+    major = profile.get("major")
+    if not isinstance(major, str):
+        return None
+
+    normalized = major.strip().upper()
+    return normalized if normalized in {"AI", "CS", "IS"} else None
+
+
+def filter_major_curriculum_results(
+    results: list,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Remove other-major curriculum chunks without filtering common policy."""
+
+    profile_major = _profile_major(profile)
+    if profile_major is None:
+        return results[:final_top_k]
+
+    matching_major = []
+    neutral_or_common = []
+    major_specific_types = {
+        "semester_plan",
+        "elective_pool_course",
+    }
+
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = metadata.get("doc_type")
+        result_major = str(metadata.get("major") or "").upper()
+
+        if doc_type in major_specific_types:
+            if result_major.startswith(profile_major):
+                matching_major.append(item)
+            elif "SHARED" in result_major or "COMMON" in result_major:
+                neutral_or_common.append(item)
+            continue
+
+        neutral_or_common.append(item)
+
+    return (
+        matching_major
+        + neutral_or_common
+    )[:final_top_k]
+
+
+def filter_graduation_hours_results(
+    results: list,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Keep only authoritative chunks that explicitly state a degree total."""
+
+    profile_major = _profile_major(profile)
+    selected = []
+
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        chunk_id = str(metadata.get("chunk_id") or "").lower()
+        result_major = str(metadata.get("major") or "").upper()
+        text = str(item.get("text") or "").lower()
+
+        authoritative_type = (
+            doc_type in {
+                "graduation_requirements",
+                "program_requirements",
+                "degree_requirements",
+            }
+            or "graduation_requirements" in chunk_id
+            or "program_total_hours" in chunk_id
+        )
+        states_total = (
+            re.search(
+                r"(?:total|required|program|degree).*\d{2,3}.*credit hours",
+                text,
+            )
+            or re.search(
+                r"(?:إجمالي|المطلوبة).*\d{2,3}.*(?:ساعة|ساعات)",
+                text,
+            )
+        )
+
+        if not authoritative_type or not states_total:
+            continue
+
+        if (
+            profile_major is not None
+            and result_major
+            and not result_major.startswith(profile_major)
+            and "SHARED" not in result_major
+            and "COMMON" not in result_major
+        ):
+            continue
+
+        selected.append(item)
+
+    return selected[:final_top_k]
 
 
 # =========================================================
@@ -484,7 +684,15 @@ def retrieve_context(
     profile: dict = None,
 ) -> dict:
 
+    graduation_hours = (
+        is_remaining_graduation_hours_question(
+            question
+        )
+    )
+
     registration_load = (
+        not graduation_hours
+        and
         is_registration_load_question(
             question
         )
@@ -505,14 +713,18 @@ def retrieve_context(
                 f"{profile_gpa:.2f}"
             )
 
-    request_top_k = (
-        max(
-            top_k,
-            6,
-        )
-        if registration_load
-        else top_k
-    )
+    # =====================================================
+    # Wider candidate pool
+    # =====================================================
+
+    if graduation_hours:
+        request_top_k = max(top_k, 10)
+    elif is_major_curriculum_question(question):
+        request_top_k = max(top_k, 9)
+    elif registration_load:
+        request_top_k = max(top_k, 6)
+    else:
+        request_top_k = top_k
 
     payload = {
         "question":
@@ -550,7 +762,26 @@ def retrieve_context(
     # Registration filtering
     # =====================================================
 
-    if registration_load:
+    if graduation_hours:
+
+        results = filter_graduation_hours_results(
+            results=results,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif (
+        is_major_curriculum_question(question)
+        and _profile_major(profile) is not None
+    ):
+
+        results = filter_major_curriculum_results(
+            results=results,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif registration_load:
 
         results = (
             filter_registration_results(
@@ -874,6 +1105,16 @@ def generate_answer(
         context=context,
         question=question,
     )
+
+    if is_narrow_course_identity_question(question):
+        turn_prompt += (
+            "\n\n<response_scope>\n"
+            "This is a narrow course-identity request. "
+            "Answer with only the course code, course name, and credit hours. "
+            "Do not mention prerequisites, semester, contact hours, or other "
+            "attributes unless the student explicitly asked for them.\n"
+            "</response_scope>"
+        )
 
     messages = [
         (

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .academic_record_parser import parse_academic_record
 from .student_profile import (
     extract_profile_updates,
+    extract_short_onboarding_reply,
     onboarding_message,
     profile_is_ready,
     contains_arabic,
@@ -28,6 +29,7 @@ from .rag_chain import (
     get_retrieval_top_k,
 )
 from .session_store import session_store
+from .llm import LLMServiceUnavailableError
 
 
 logger = logging.getLogger(__name__)
@@ -145,6 +147,7 @@ def health():
 @app.post("/chat")
 def chat(req: ChatRequest):
     stage = "start"
+    standalone_question = None
 
     try:
         # 1. Load session state
@@ -181,9 +184,9 @@ def chat(req: ChatRequest):
                 lines = [
                     "✅ **Academic Record Uploaded & Analyzed!**",
                     "",
-                    f"• **Cumulative GPA**: {profile[gpa] if profile[gpa] is not None else "N/A"}",
-                    f"• **Completed Hours**: {str(profile[completed_hours]) + " hrs" if profile[completed_hours] is not None else "N/A"}",
-                    f"• **Major**: {profile[major] or "Not specified"}",
+                    f"• **Cumulative GPA**: {profile.get('gpa') if profile.get('gpa') is not None else 'N/A'}",
+                    f"• **Completed Hours**: {str(profile.get('completed_hours')) + ' hrs' if profile.get('completed_hours') is not None else 'N/A'}",
+                    f"• **Major**: {profile.get('major') or 'Not specified'}",
                 ]
                 if profile.get("completed_courses"):
                     courses_str = ", ".join(f"`{c}`" for c in profile["completed_courses"])
@@ -196,7 +199,9 @@ def chat(req: ChatRequest):
                     if profile.get("gpa") is None: missing.append("GPA")
                     if profile.get("completed_hours") is None: missing.append("Completed Hours")
                     if profile.get("major") is None: missing.append("Major")
-                    lines.append(f"\nAlmost there! Please also provide: {", ".join(missing)}.")
+                    lines.append(
+                        f"\nAlmost there! Please also provide: {', '.join(missing)}."
+                    )
 
                 answer = "\n".join(lines)
                 session_store.add_message(req.session_id, role="user", content="[Uploaded Academic Record Image]")
@@ -216,17 +221,30 @@ def chat(req: ChatRequest):
 
         current_question = text_question
 
-        # 4. Extract personal student data from text
+        # 4. Extract personal student data from text only while onboarding.
+        updates = {
+            "gpa": None,
+            "completed_hours": None,
+            "major": None,
+        }
         if input_type == "text":
             stage = "extract_profile"
-            updates = extract_profile_updates(current_question)
+            if not profile_is_ready(profile):
+                updates = extract_profile_updates(current_question)
+                short_updates = extract_short_onboarding_reply(
+                    text=current_question,
+                    profile=profile,
+                )
+                for key, value in short_updates.items():
+                    if updates.get(key) is None and value is not None:
+                        updates[key] = value
 
-            if updates.get("gpa") is not None:
-                session_store.update_profile(req.session_id, gpa=updates["gpa"])
-            if updates.get("completed_hours") is not None:
-                session_store.update_profile(req.session_id, completed_hours=updates["completed_hours"])
-            if updates.get("major") is not None:
-                session_store.update_profile(req.session_id, major=updates["major"])
+                session_store.update_profile(
+                    req.session_id,
+                    gpa=updates.get("gpa"),
+                    completed_hours=updates.get("completed_hours"),
+                    major=updates.get("major"),
+                )
 
             profile = session_store.get_profile(req.session_id)
 
@@ -316,10 +334,13 @@ def chat(req: ChatRequest):
 
         # 8. Rewrite follow-up question
         stage = "rewrite_question"
-        standalone_question = rewrite_question(
-            question=current_question,
-            history=history,
-        )
+        if needs_conversation_context(current_question):
+            standalone_question = rewrite_question(
+                question=current_question,
+                history=history,
+            )
+        else:
+            standalone_question = current_question
 
         # 9. Retrieve RAG context
         stage = "rag_retrieval"
@@ -348,8 +369,8 @@ def chat(req: ChatRequest):
 
         if input_type == "multimodal" and extracted:
             header_note = (
-                f"📄 *Academic record processed (GPA: {profile.get("gpa")}, "
-                f"Hours: {profile.get("completed_hours")}, Major: {profile.get("major")})*\n\n"
+                f"📄 *Academic record processed (GPA: {profile.get('gpa')}, "
+                f"Hours: {profile.get('completed_hours')}, Major: {profile.get('major')})*\n\n"
             )
             answer = header_note + answer
 
@@ -372,10 +393,55 @@ def chat(req: ChatRequest):
             "extracted": extracted,
             "onboarding_complete": True,
             "history_size": len(history) + 2,
+            "service_status": "ok",
         }
 
     except HTTPException:
         raise
+
+    except LLMServiceUnavailableError as exc:
+
+        logger.warning(
+            "LLM temporarily unavailable | "
+            "stage=%s | session_id=%s | error=%s",
+            stage,
+            req.session_id,
+            exc,
+        )
+
+        response_question = locals().get("current_question") or req.question or ""
+        if contains_arabic(response_question):
+            answer = (
+                "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. "
+                "حاول مرة أخرى بعد قليل."
+            )
+        else:
+            answer = (
+                "The AI service is temporarily busy. "
+                "Please try again shortly."
+            )
+
+        response = {
+            "session_id": req.session_id,
+            "question": response_question,
+            "answer": answer,
+            "sources": [],
+            "profile": profile,
+            "onboarding_complete": profile_is_ready(
+                profile
+            ),
+            "history_size": len(history),
+            "service_status": (
+                "llm_temporarily_unavailable"
+            ),
+        }
+
+        if standalone_question is not None:
+            response["standalone_question"] = (
+                standalone_question
+            )
+
+        return response
     except Exception as exc:
         logger.exception("Unhandled /chat error | stage=%s | session_id=%s", stage, req.session_id)
         raise HTTPException(
@@ -446,8 +512,8 @@ async def _process_uploaded_transcript(session_id: str, file: UploadFile) -> dic
             session_id,
             role="assistant",
             content=(
-                f"Extracted academic record: GPA={profile.get("gpa")}, "
-                f"Hours={profile.get("completed_hours")}, Major={profile.get("major")}"
+                f"Extracted academic record: GPA={profile.get('gpa')}, "
+                f"Hours={profile.get('completed_hours')}, Major={profile.get('major')}"
             ),
         )
 

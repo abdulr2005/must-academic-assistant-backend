@@ -5,6 +5,28 @@ from typing import Optional
 from .llm import llm
 
 
+def _looks_like_registration_question(text: str) -> bool:
+    text_lower = text.strip().lower()
+
+    markers = [
+        "?",
+        "؟",
+        "can i register",
+        "may i register",
+        "how many hours can i register",
+        "register",
+        "أسجل",
+        "اسجل",
+        "اقدر اسجل",
+        "أقدر أسجل",
+    ]
+
+    return any(
+        marker in text_lower
+        for marker in markers
+    )
+
+
 # =========================================================
 # Validation
 # =========================================================
@@ -443,6 +465,10 @@ def extract_profile_fallback(text: str) -> dict:
         "major": None,
     }
 
+    looks_like_registration_question = (
+        _looks_like_registration_question(text)
+    )
+
     # -----------------------------------------------------
     # GPA
     # -----------------------------------------------------
@@ -531,11 +557,12 @@ def extract_profile_fallback(text: str) -> dict:
                 r"(?:my\s+major\s+is|تخصصي)\s*(?:general|undeclared|عام|جنرال)",
                 "General",
             ),
-            (r"\b(ai|artificial intelligence|ذكاء\s*اصطناعي|الذكاء\s*الاصطناعي)\b", "AI"),
-            (r"\b(cs|computer science|علوم\s*حاسب|علوم\s*الحاسب)\b", "CS"),
-            (r"\b(is|information systems?|نظم\s*معلومات|نظم\s*المعلومات)\b", "IS"),
-            (r"\b(general|undeclared|عام|جنرال)\b", "General"),
         ]
+
+        exact_major = validate_major(text.strip())
+        if exact_major is not None:
+            result["major"] = exact_major
+            return result
 
         for pattern, major in major_patterns:
             if re.search(pattern, text, flags=re.IGNORECASE):
@@ -553,45 +580,60 @@ def extract_profile_updates(text: str) -> dict:
     """
     Main profile extraction entry point.
 
-    Primary:
-        LLM semantic understanding.
+    Strategy:
+    1. Try the deterministic parser first.
+    2. If it extracted useful information, return immediately.
+    3. Only use the LLM for ambiguous/natural-language input.
+    4. Never allow profile extraction failure to crash /chat.
 
-    Emergency fallback:
-        Conservative Regex.
-
-    A failure in profile extraction must NEVER crash /chat.
+    This significantly reduces LLM usage during onboarding.
     """
 
+    empty_result = {
+        "gpa": None,
+        "completed_hours": None,
+        "major": None,
+    }
+
+    # =====================================================
+    # 1. Cheap deterministic parser first
+    # =====================================================
+
     try:
-        return extract_profile_with_llm(
-            text
+        fallback_result = extract_profile_fallback(text)
+
+        if any(
+            value is not None
+            for value in fallback_result.values()
+        ):
+            return fallback_result
+
+        if _looks_like_registration_question(text):
+            return fallback_result
+
+    except Exception as exc:
+        print(
+            "[PROFILE] Deterministic parser failed. "
+            f"Reason: {type(exc).__name__}"
         )
+
+        fallback_result = empty_result.copy()
+
+    # =====================================================
+    # 2. LLM only for difficult / ambiguous language
+    # =====================================================
+
+    try:
+        return extract_profile_with_llm(text)
 
     except Exception as exc:
         print(
             "[PROFILE] LLM parser failed. "
-            "Using conservative fallback. "
+            "Using deterministic result. "
             f"Reason: {type(exc).__name__}"
         )
 
-        try:
-            return extract_profile_fallback(
-                text
-            )
-
-        except Exception as fallback_exc:
-            print(
-                "[PROFILE] Fallback parser failed. "
-                f"Reason: {type(fallback_exc).__name__}"
-            )
-
-            return {
-                "gpa": None,
-                "completed_hours": None,
-                "major": None,
-            }
-
-
+        return fallback_result
 # =========================================================
 # Onboarding State
 # =========================================================
@@ -624,6 +666,178 @@ def profile_is_ready(
         )
     ) == 0
 
+
+def extract_short_onboarding_reply(
+    text: str,
+    profile: dict,
+) -> dict:
+    """
+    Interpret short replies while the student is still
+    completing onboarding.
+
+    Examples:
+        106 hours
+        106 credit hours
+        106 ساعة
+        106 sa3a
+        AI
+        CS
+        IS
+        General
+
+    Important:
+    This function is contextual and should only be called
+    while onboarding is incomplete.
+
+    It intentionally does NOT interpret questions such as:
+        Can I register 18 hours?
+        اقدر اسجل 18 ساعة؟
+    """
+
+    result = {
+        "gpa": None,
+        "completed_hours": None,
+        "major": None,
+    }
+
+    if not isinstance(text, str):
+        return result
+
+    q = text.strip()
+
+    if not q:
+        return result
+
+    missing = get_missing_profile_fields(profile)
+
+    # =====================================================
+    # Safety: questions are NOT short profile answers
+    # =====================================================
+
+    q_lower = q.lower()
+
+    question_markers = [
+        "?",
+        "؟",
+        "can i",
+        "may i",
+        "how many",
+        "how much",
+        "what",
+        "which",
+        "is it",
+        "هل",
+        "اقدر",
+        "أقدر",
+        "ينفع",
+        "كم",
+        "كام",
+        "ايه",
+        "إيه",
+    ]
+
+    if any(
+        marker in q_lower
+        for marker in question_markers
+    ):
+        return result
+
+    # =====================================================
+    # Major
+    # =====================================================
+
+    if "major" in missing:
+
+        major = validate_major(q)
+
+        if major is not None:
+            result["major"] = major
+            return result
+
+    # =====================================================
+    # Completed hours with an explicit unit
+    # =====================================================
+
+    if "completed_hours" in missing:
+
+        hours_match = re.fullmatch(
+            r"\s*(\d{1,3})\s*"
+            r"(?:"
+            r"credit\s*hours?"
+            r"|credits?"
+            r"|hours?"
+            r"|hrs?"
+            r"|ساعة"
+            r"|ساعه"
+            r"|ساعات"
+            r"|sa3a"
+            r"|sa3at"
+            r")\s*",
+            q,
+            flags=re.IGNORECASE,
+        )
+
+        if hours_match:
+
+            value = validate_completed_hours(
+                hours_match.group(1)
+            )
+
+            if value is not None:
+                result["completed_hours"] = value
+                return result
+
+    # =====================================================
+    # Bare number
+    #
+    # Only infer it if exactly ONE numeric field is missing.
+    # =====================================================
+
+    bare_number = re.fullmatch(
+        r"\s*(\d+(?:\.\d{1,2})?)\s*",
+        q,
+    )
+
+    if bare_number:
+
+        value = bare_number.group(1)
+
+        numeric_missing = [
+            field
+            for field in [
+                "gpa",
+                "completed_hours",
+            ]
+            if field in missing
+        ]
+
+        # ---------------------------------------------
+        # Only GPA is missing
+        # ---------------------------------------------
+
+        if numeric_missing == ["gpa"]:
+
+            gpa = validate_gpa(value)
+
+            if gpa is not None:
+                result["gpa"] = gpa
+
+            return result
+
+        # ---------------------------------------------
+        # Only completed hours are missing
+        # ---------------------------------------------
+
+        if numeric_missing == ["completed_hours"]:
+
+            hours = validate_completed_hours(value)
+
+            if hours is not None:
+                result["completed_hours"] = hours
+
+            return result
+
+    return result
 
 # =========================================================
 # Language
