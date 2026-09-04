@@ -108,6 +108,129 @@ def is_major_curriculum_question(
     )
 
 
+def extract_requested_semester(question: str):
+    """Return an explicitly requested semester number, if present."""
+
+    q = question.lower().strip()
+    numeric_patterns = [
+        r"(?:semester|sem)\s*(\d)",
+        r"(?:term)\s*(\d)",
+        r"(?:الفصل(?:\s+الدراسي)?|الترم|ترم|السمستر|سمستر)\s*(\d)",
+    ]
+    for pattern in numeric_patterns:
+        match = re.search(pattern, q, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+
+    ordinals = {
+        "first": 1, "second": 2, "third": 3, "fourth": 4,
+        "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+        "الأول": 1, "الاول": 1, "الثاني": 2, "الثانى": 2,
+        "الثالث": 3, "الرابع": 4, "الخامس": 5, "السادس": 6,
+        "السابع": 7, "الثامن": 8,
+    }
+    if re.search(r"semester|term|الفصل|الترم|ترم|السمستر|سمستر", q):
+        for word, number in ordinals.items():
+            if word in q:
+                return number
+    return None
+
+
+def is_semester_plan_question(question: str) -> bool:
+    """Detect requests for the courses belonging to a specific semester."""
+
+    q = question.lower().strip()
+    has_semester = extract_requested_semester(question) is not None
+    has_course_intent = bool(re.search(r"courses?|subjects?|مواد|مقررات", q))
+    return has_semester and has_course_intent
+
+
+def is_specialization_requirements_question(question: str) -> bool:
+    """Detect eligibility/rule questions about choosing a specialization."""
+
+    q = question.lower().strip()
+    patterns = [
+        r"speciali[sz](?:e|ation|ing)",
+        r"choose\s+(?:a\s+)?major",
+        r"select\s+(?:a\s+)?major",
+        r"major\s+(?:selection|requirements?|eligibility)",
+        r"(?:اتخصص|أتخصص|التخصص|اختار\s+التخصص|أختار\s+التخصص)",
+        r"(?:شروط|متطلبات).*تخصص",
+    ]
+    return any(re.search(pattern, q, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def is_broad_major_curriculum_question(question: str) -> bool:
+    """Detect a whole-major curriculum request, not core/elective subsets."""
+
+    q = question.lower().strip()
+    if extract_requested_semester(question) is not None:
+        return False
+    if re.search(r"\b[a-z]{2,5}[.\- ]?\d{3}\b", q, flags=re.IGNORECASE):
+        return False
+
+    patterns = [
+        r"courses?.*(?:for|in|need for)\s+(?:my\s+)?major",
+        r"(?:ai|artificial intelligence|cs|computer science|is|information systems?)\s+curriculum",
+        r"curriculum.*(?:ai|artificial intelligence|cs|computer science|information systems?|my major)",
+        r"مواد\s+تخصص(?:ي|\s+(?:الذكاء\s+الاصطناعي|علوم\s+الحاسب|نظم\s+المعلومات))?",
+        r"الخطة\s+الدراسية.*(?:ai|cs|is|تخصص)",
+    ]
+    return any(re.search(pattern, q, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def is_core_required_courses_question(question: str) -> bool:
+    """Detect requests specifically for mandatory/core major courses."""
+
+    q = question.lower().strip()
+    patterns = [
+        r"(?:core|required|mandatory)\s+(?:(?:ai|cs|is)\s+)?(?:major\s+)?(?:courses?|subjects?)",
+        r"major\s+core",
+        r"(?:courses?|subjects?).*(?:required|mandatory|core)",
+        r"مواد\s+(?:الكور|الأساسية|الاساسية|المطلوبة|الإجبارية|الاجبارية)",
+        r"المقررات\s+(?:الأساسية|الاساسية|المطلوبة|الإجبارية|الاجبارية)",
+        r"مواد\s+التخصص\s+(?:الأساسية|الاساسية|المطلوبة|الإجبارية|الاجبارية)",
+    ]
+    return any(re.search(pattern, q, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def is_major_electives_question(question: str) -> bool:
+    """Detect requests for the selectable elective pool of a major."""
+
+    q = question.lower().strip()
+    patterns = [
+        r"(?:major\s+)?elective\s+(?:courses?|subjects?)",
+        r"(?:courses?|subjects?).*electives?",
+        r"optional\s+major\s+courses?",
+        r"\belectives?\b",
+        r"المواد\s+الاختيارية",
+        r"مقررات\s+اختيارية",
+        r"مواد\s+(?:الـ\s*)?elective",
+        r"اختيارات\s+التخصص",
+    ]
+    return any(re.search(pattern, q, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def classify_curriculum_intent(question: str):
+    """Classify curriculum intents in collision-safe precedence order."""
+
+    q = question.lower().strip()
+    course_code = r"\b[a-z]{2,5}[.\- ]?\d{3}\b"
+    if re.search(course_code, q, flags=re.IGNORECASE):
+        if re.search(r"prereq|prerequisite|متطلب", q, flags=re.IGNORECASE):
+            return "PREREQUISITE"
+        return "SPECIFIC_COURSE"
+    if is_major_electives_question(question):
+        return "MAJOR_ELECTIVES"
+    if is_core_required_courses_question(question):
+        return "CORE_REQUIRED_COURSES"
+    if is_semester_plan_question(question):
+        return "SEMESTER_PLAN"
+    if is_broad_major_curriculum_question(question):
+        return "BROAD_MAJOR_CURRICULUM"
+    return None
+
+
 def is_narrow_course_identity_question(
     question: str,
 ) -> bool:
@@ -227,6 +350,12 @@ def get_retrieval_top_k(
     question: str,
 ) -> int:
 
+    curriculum_intent = classify_curriculum_intent(question)
+    if curriculum_intent == "BROAD_MAJOR_CURRICULUM":
+        return 4
+    if curriculum_intent in {"CORE_REQUIRED_COURSES", "MAJOR_ELECTIVES"}:
+        return 6
+
     if is_remaining_graduation_hours_question(
         question
     ):
@@ -250,6 +379,136 @@ def _profile_major(profile: dict = None):
 
     normalized = major.strip().upper()
     return normalized if normalized in {"AI", "CS", "IS"} else None
+
+
+def _curriculum_major(question: str, profile: dict = None):
+    """Resolve an explicit curriculum major, otherwise use the session profile."""
+
+    q = question.lower()
+    explicit_patterns = (
+        ("AI", r"\bai\b|artificial intelligence|الذكاء\s+الاصطناعي"),
+        ("CS", r"\bcs\b|computer science|علوم\s+(?:الحاسب|حاسب)"),
+        ("IS", r"\bis\b|information systems?|نظم\s+(?:المعلومات|معلومات)"),
+    )
+    for major, pattern in explicit_patterns:
+        if re.search(pattern, q, flags=re.IGNORECASE):
+            return major
+
+    profile_major = _profile_major(profile)
+    if profile_major:
+        return profile_major
+    if profile and str(profile.get("major") or "").strip().upper() == "GENERAL":
+        return "GENERAL"
+    return None
+
+
+def filter_broad_curriculum_results(
+    results: list,
+    question: str,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Prefer compact same-major plans; fall back to same-major core records."""
+
+    target_major = _curriculum_major(question, profile)
+    if target_major is None:
+        return []
+
+    plans = []
+    core_courses = []
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        result_major = str(metadata.get("major") or "").upper()
+        text = str(item.get("text") or "")
+
+        matches_major = bool(
+            re.search(rf"\b{re.escape(target_major)}\b", result_major)
+        )
+        if target_major == "GENERAL":
+            matches_major = result_major.startswith("GENERAL")
+        if not matches_major:
+            continue
+
+        if doc_type in {"semester_plan", "general_regulation_semester"}:
+            plans.append(item)
+        elif doc_type in {"major_regulation_course", "course"} and re.search(
+            r"major core", text, flags=re.IGNORECASE
+        ):
+            core_courses.append(item)
+
+    return (plans if plans else core_courses)[:final_top_k]
+
+
+def filter_core_required_results(
+    results: list,
+    question: str,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Keep officially labelled same-major core courses, excluding electives."""
+
+    target_major = _curriculum_major(question, profile)
+    if target_major is None:
+        return []
+
+    official_core = []
+    plan_fallback = []
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        result_major = str(metadata.get("major") or "").upper()
+        text = str(item.get("text") or "")
+        matches_major = bool(re.search(rf"\b{re.escape(target_major)}\b", result_major))
+        if target_major == "GENERAL":
+            matches_major = result_major.startswith("GENERAL")
+        if not matches_major:
+            continue
+
+        if doc_type in {"major_regulation_course", "course"}:
+            if re.search(r"major core", text, flags=re.IGNORECASE):
+                official_core.append(item)
+            continue
+
+        if doc_type in {"semester_plan", "general_regulation_semester"}:
+            cleaned = re.sub(
+                r"(?:EC\(\d+\)|Elective Course slot).*?(?=(?:[A-Z]{2,5}[.]?\d+|EC\(\d+\))\s*\(|$)",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if cleaned.strip():
+                derived = dict(item)
+                derived["text"] = (
+                    "Required/non-elective courses in the official study plan: "
+                    + cleaned.strip()
+                )
+                plan_fallback.append(derived)
+
+    return (official_core if official_core else plan_fallback)[:final_top_k]
+
+
+def filter_major_elective_results(
+    results: list,
+    question: str,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Keep only actual elective-pool choices belonging to the resolved major."""
+
+    target_major = _curriculum_major(question, profile)
+    if target_major not in {"AI", "CS", "IS"}:
+        return []
+
+    prefix = f"elective_{target_major}_".lower()
+    selected = []
+    for item in results:
+        metadata = item.get("metadata") or {}
+        chunk_id = str(metadata.get("chunk_id") or "").lower()
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        if doc_type == "elective_pool_course" and chunk_id.startswith(prefix):
+            selected.append(item)
+    return selected[:final_top_k]
 
 
 def filter_major_curriculum_results(
@@ -288,6 +547,75 @@ def filter_major_curriculum_results(
         matching_major
         + neutral_or_common
     )[:final_top_k]
+
+
+def filter_semester_plan_results(
+    results: list,
+    question: str,
+    profile: dict,
+    final_top_k: int,
+) -> list:
+    """Keep the requested semester plan without mixing curriculum tracks."""
+
+    semester = extract_requested_semester(question)
+    profile_major = _profile_major(profile)
+    preferred_major = "GENERAL" if semester is not None and semester <= 4 else profile_major
+    plans = []
+    common = []
+
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        result_major = str(metadata.get("major") or "").upper()
+        result_semester = metadata.get("semester")
+
+        if doc_type in {"semester_plan", "general_regulation_semester"}:
+            try:
+                if semester is not None and int(result_semester) != semester:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+            if preferred_major == "GENERAL":
+                if result_major.startswith("GENERAL"):
+                    plans.append(item)
+            elif preferred_major:
+                if result_major.startswith(preferred_major):
+                    plans.append(item)
+                elif "COMMON" in result_major or "SHARED" in result_major:
+                    common.append(item)
+            elif result_major.startswith("GENERAL"):
+                plans.append(item)
+            continue
+
+        # Preserve genuinely common faculty evidence, but do not let unrelated
+        # GPA/registration articles leak into a semester-plan answer.
+        if (
+            doc_type in {"faculty_regulation", "common_regulation"}
+            or "COMMON" in result_major
+            or "SHARED" in result_major
+        ):
+            common.append(item)
+
+    return (plans + common)[:final_top_k]
+
+
+def filter_specialization_results(results: list, final_top_k: int) -> list:
+    """Keep only authoritative chunks that state specialization rules."""
+
+    selected = []
+    allowed_types = {
+        "specialization_transition",
+        "specialization_requirements",
+        "major_selection_rule",
+    }
+    for item in results:
+        metadata = item.get("metadata") or {}
+        doc_type = str(metadata.get("doc_type") or "").lower()
+        chunk_id = str(metadata.get("chunk_id") or "").lower()
+        if doc_type in allowed_types or "specialization" in chunk_id:
+            selected.append(item)
+    return selected[:final_top_k]
 
 
 def filter_graduation_hours_results(
@@ -503,6 +831,44 @@ def _fallback_local_search(question: str, top_k: int) -> list:
                 score += 1.0
         if is_registration_load_question(question) and c.get("doc_type") == "gpa_article":
             score += 3.0
+        requested_semester = extract_requested_semester(question)
+        if (
+            is_semester_plan_question(question)
+            and requested_semester is not None
+            and c.get("doc_type") in {"semester_plan", "general_regulation_semester"}
+            and c.get("semester") == requested_semester
+        ):
+            score += 8.0
+        if (
+            is_specialization_requirements_question(question)
+            and c.get("doc_type") in {
+                "specialization_transition",
+                "specialization_requirements",
+                "major_selection_rule",
+            }
+        ):
+            score += 8.0
+        curriculum_intent = classify_curriculum_intent(question)
+        if curriculum_intent in {
+            "BROAD_MAJOR_CURRICULUM",
+            "CORE_REQUIRED_COURSES",
+            "MAJOR_ELECTIVES",
+        }:
+            target_major = _curriculum_major(question)
+            result_major = str(c.get("major") or "").upper()
+            if target_major and re.search(rf"\b{re.escape(target_major)}\b", result_major):
+                if curriculum_intent == "MAJOR_ELECTIVES" and (
+                    c.get("doc_type") == "elective_pool_course"
+                    and chunk_id.lower().startswith(f"elective_{target_major.lower()}_")
+                ):
+                    score += 10.0
+                elif curriculum_intent == "CORE_REQUIRED_COURSES" and (
+                    c.get("doc_type") in {"major_regulation_course", "course"}
+                    and re.search(r"major core", text, flags=re.IGNORECASE)
+                ):
+                    score += 10.0
+                elif c.get("doc_type") == "semester_plan":
+                    score += 8.0
         if score > 0:
             scored.append((score, {
                 "text": text,
@@ -692,6 +1058,7 @@ def retrieve_context(
 
     registration_load = (
         not graduation_hours
+        and not is_specialization_requirements_question(question)
         and
         is_registration_load_question(
             question
@@ -699,6 +1066,28 @@ def retrieve_context(
     )
 
     retrieval_question = question
+    curriculum_intent = classify_curriculum_intent(question)
+    routed_curriculum_intents = {
+        "BROAD_MAJOR_CURRICULUM",
+        "CORE_REQUIRED_COURSES",
+        "MAJOR_ELECTIVES",
+    }
+    curriculum_major = (
+        _curriculum_major(question, profile)
+        if curriculum_intent in routed_curriculum_intents
+        else None
+    )
+    if curriculum_intent in routed_curriculum_intents and curriculum_major:
+        preference = {
+            "BROAD_MAJOR_CURRICULUM": "authoritative semester plans",
+            "CORE_REQUIRED_COURSES": "officially labelled Major Core course records",
+            "MAJOR_ELECTIVES": "actual elective pool course records",
+        }[curriculum_intent]
+        retrieval_question = (
+            f"{question}\n"
+            f"Target major curriculum: {curriculum_major}. "
+            f"Prefer {preference}."
+        )
 
     # =====================================================
     # Inject profile GPA for registration routing
@@ -718,6 +1107,15 @@ def retrieve_context(
     # =====================================================
 
     if graduation_hours:
+        request_top_k = max(top_k, 10)
+    elif curriculum_intent == "BROAD_MAJOR_CURRICULUM":
+        request_top_k = max(top_k, 6)
+    elif curriculum_intent in {"CORE_REQUIRED_COURSES", "MAJOR_ELECTIVES"}:
+        request_top_k = max(top_k, 8)
+    elif is_semester_plan_question(question):
+        # The deployed SearchRequest schema accepts top_k values from 1 to 10.
+        request_top_k = max(top_k, 10)
+    elif is_specialization_requirements_question(question):
         request_top_k = max(top_k, 10)
     elif is_major_curriculum_question(question):
         request_top_k = max(top_k, 9)
@@ -767,6 +1165,49 @@ def retrieve_context(
         results = filter_graduation_hours_results(
             results=results,
             profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif curriculum_intent == "MAJOR_ELECTIVES":
+
+        results = filter_major_elective_results(
+            results=results,
+            question=question,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif curriculum_intent == "CORE_REQUIRED_COURSES":
+
+        results = filter_core_required_results(
+            results=results,
+            question=question,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif curriculum_intent == "BROAD_MAJOR_CURRICULUM":
+
+        results = filter_broad_curriculum_results(
+            results=results,
+            question=question,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif is_semester_plan_question(question):
+
+        results = filter_semester_plan_results(
+            results=results,
+            question=question,
+            profile=profile,
+            final_top_k=top_k,
+        )
+
+    elif is_specialization_requirements_question(question):
+
+        results = filter_specialization_results(
+            results=results,
             final_top_k=top_k,
         )
 
@@ -1099,8 +1540,16 @@ def generate_answer(
     profile: dict = None,
 ):
 
+    curriculum_intent = classify_curriculum_intent(question)
+    answer_profile = profile
+    if curriculum_intent == "BROAD_MAJOR_CURRICULUM" and profile:
+        # Completed hours do not establish the student's current level,
+        # semester, completed courses, or remaining curriculum.
+        answer_profile = dict(profile)
+        answer_profile["completed_hours"] = None
+
     turn_prompt = build_turn_prompt(
-        student_profile=profile,
+        student_profile=answer_profile,
         history=history,
         context=context,
         question=question,
@@ -1113,6 +1562,18 @@ def generate_answer(
             "Answer with only the course code, course name, and credit hours. "
             "Do not mention prerequisites, semester, contact hours, or other "
             "attributes unless the student explicitly asked for them.\n"
+            "</response_scope>"
+        )
+
+    if curriculum_intent == "BROAD_MAJOR_CURRICULUM":
+        turn_prompt += (
+            "\n\n<response_scope>\n"
+            "Present the full major curriculum represented by <context>. "
+            "Do not infer the student's current level or semester from completed_hours. "
+            "Do not infer that earlier semesters or courses are completed. "
+            "An empty completed_courses list is untracked, not evidence of completion. "
+            "Do not describe courses as remaining unless the student explicitly asks what "
+            "is left and sufficient completed-course evidence is available.\n"
             "</response_scope>"
         )
 
