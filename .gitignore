@@ -1,0 +1,11 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+app_backup/
+tests/evaluation_checkpoint.json
+tests/evaluation_output/
+tests/evaluation_checkpoint.json
+tests/evaluation_output/

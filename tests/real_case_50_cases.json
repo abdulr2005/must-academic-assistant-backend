@@ -1,0 +1,996 @@
+[
+  {
+    "id": "COURSE_001",
+    "category": "course_info",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "course name / identity",
+    "turns": [
+      {
+        "question": "What is AI.499?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.499",
+        "Graduation Project II"
+      ],
+      "top_source_contains": "AI.499"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_002",
+    "category": "course_info",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "course credit hours",
+    "turns": [
+      {
+        "question": "How many credit hours is AI.499?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.499",
+        "3"
+      ],
+      "top_source_contains": "AI.499"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_003",
+    "category": "course_info",
+    "language": "ar",
+    "conversation_type": "single_turn",
+    "problem_pattern": "مادة X اسمها إيه؟",
+    "turns": [
+      {
+        "question": "ما اسم مادة AI.499؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.499",
+        "Graduation Project II"
+      ],
+      "top_source_contains": "AI.499"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_004",
+    "category": "course_info",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "مادة X كام ساعة؟",
+    "turns": [
+      {
+        "question": "AI.499 كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.499",
+        "3"
+      ],
+      "top_source_contains": "AI.499"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_005",
+    "category": "course_info",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "course name / identity",
+    "turns": [
+      {
+        "question": "What is AI.498?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498",
+        "Graduation Project I"
+      ],
+      "top_source_contains": "AI.498"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_006",
+    "category": "course_info",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "course credit hours",
+    "turns": [
+      {
+        "question": "How many credit hours is AI.498?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498",
+        "3"
+      ],
+      "top_source_contains": "AI.498"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_011",
+    "category": "course_info",
+    "language": "ar",
+    "conversation_type": "single_turn",
+    "problem_pattern": "مادة X اسمها إيه؟",
+    "turns": [
+      {
+        "question": "ما اسم مادة AI.483؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.483",
+        "Computer Vision"
+      ],
+      "top_source_contains": "AI.483"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_012",
+    "category": "course_info",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "مادة X كام ساعة؟",
+    "turns": [
+      {
+        "question": "AI.483 كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.483",
+        "3"
+      ],
+      "top_source_contains": "AI.483"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_093",
+    "category": "course_info",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "course name / identity",
+    "turns": [
+      {
+        "question": "What is AI.230?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.230",
+        "Embedded Systems"
+      ],
+      "top_source_contains": "AI.230"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "COURSE_096",
+    "category": "course_info",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "مادة X كام ساعة؟",
+    "turns": [
+      {
+        "question": "AI.230 كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.230",
+        "3"
+      ],
+      "top_source_contains": "AI.230"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PLAN_EN_01",
+    "category": "semester_plan",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "courses in Semester X",
+    "turns": [
+      {
+        "question": "Which courses are in semester 5 for AI?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.301",
+        "AI.342",
+        "AI.331"
+      ],
+      "top_source_contains": "plan_AI_sem5"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PLAN_AR_02",
+    "category": "semester_plan",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "ما هي مواد سمستر X؟",
+    "turns": [
+      {
+        "question": "مواد ترم 6 لتخصص AI إيه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.343",
+        "CS.383",
+        "AI.332"
+      ],
+      "top_source_contains": "plan_AI_sem6"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PLAN_EN_04",
+    "category": "semester_plan",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "courses in Semester X",
+    "turns": [
+      {
+        "question": "Which courses are in semester 8 for AI?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.466",
+        "AI.483",
+        "AI.499"
+      ],
+      "top_source_contains": "plan_AI_sem8"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PLAN_AR_04",
+    "category": "semester_plan",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "ما هي مواد سمستر X؟",
+    "turns": [
+      {
+        "question": "مواد ترم 8 لتخصص AI إيه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.466",
+        "AI.483",
+        "AI.499"
+      ],
+      "top_source_contains": "plan_AI_sem8"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PLAN_EN_05",
+    "category": "semester_plan",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "courses in Semester X",
+    "turns": [
+      {
+        "question": "Which courses are in semester 4 for General?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.201",
+        "CS.231",
+        "IS.220"
+      ],
+      "top_source_contains": "plan_General_sem4"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "ELECTIVE_01",
+    "category": "electives",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "هل مادة X اختيارية وما متطلباتها؟",
+    "turns": [
+      {
+        "question": "Is IS.471 an elective for IS, and what are its prerequisites?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "IS.471",
+        "98"
+      ],
+      "top_source_contains": "IS.471"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "ELECTIVE_03",
+    "category": "electives",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "هل مادة X اختيارية وما متطلباتها؟",
+    "turns": [
+      {
+        "question": "Is CS.371 an elective for CS, and what are its prerequisites?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "CS.371",
+        "MATH241",
+        "CS.102"
+      ],
+      "top_source_contains": "CS.371"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PREREQ_AR_03",
+    "category": "prerequisites",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "إيه الـ prerequisites بتاعة مادة X؟",
+    "turns": [
+      {
+        "question": "مادة CS.371 متطلبها ايه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "CS.371",
+        "MATH241",
+        "CS.102"
+      ],
+      "top_source_contains": "CS.371"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PREREQ_AR_06",
+    "category": "prerequisites",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "إيه الـ prerequisites بتاعة مادة X؟",
+    "turns": [
+      {
+        "question": "مادة AI.445 متطلبها ايه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.445",
+        "AI.331"
+      ],
+      "top_source_contains": "AI.445"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "PREREQ_AR_08",
+    "category": "prerequisites",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "إيه الـ prerequisites بتاعة مادة X؟",
+    "turns": [
+      {
+        "question": "مادة AI.465 متطلبها ايه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.465",
+        "MATH301",
+        "98"
+      ],
+      "top_source_contains": "AI.465"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_EN_01",
+    "category": "gpa_registration",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "If GPA is X, how many hours?",
+    "turns": [
+      {
+        "question": "My GPA is 1.2. What is my maximum registration load?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "14"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_MIX_02",
+    "category": "gpa_registration",
+    "language": "mixed",
+    "conversation_type": "single_turn",
+    "problem_pattern": "الـ GPA بتاعي يسمحلي أسجل كام ساعة؟",
+    "turns": [
+      {
+        "question": "انا GPA بتاعي 1.99 اقدر register كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "14"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_EN_03",
+    "category": "gpa_registration",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "If GPA is X, how many hours?",
+    "turns": [
+      {
+        "question": "My GPA is 2.0. What is my maximum registration load?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "18"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_MIX_05",
+    "category": "gpa_registration",
+    "language": "mixed",
+    "conversation_type": "single_turn",
+    "problem_pattern": "الـ GPA بتاعي يسمحلي أسجل كام ساعة؟",
+    "turns": [
+      {
+        "question": "انا GPA بتاعي 2.99 اقدر register كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "18"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_EN_06",
+    "category": "gpa_registration",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "If GPA is X, how many hours?",
+    "turns": [
+      {
+        "question": "My GPA is 3.0. What is my maximum registration load?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "21"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_MIX_08",
+    "category": "gpa_registration",
+    "language": "mixed",
+    "conversation_type": "single_turn",
+    "problem_pattern": "الـ GPA بتاعي يسمحلي أسجل كام ساعة؟",
+    "turns": [
+      {
+        "question": "انا GPA بتاعي 3.9 اقدر register كام ساعة؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "21"
+      ],
+      "top_source_contains": "gpa_article"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_MEMORY_01",
+    "category": "session_memory",
+    "language": "en",
+    "conversation_type": "multi_turn",
+    "problem_pattern": "GPA supplied earlier in session",
+    "turns": [
+      {
+        "question": "My GPA is 1.8."
+      },
+      {
+        "question": "So how many hours may I register?"
+      }
+    ],
+    "expected": {
+      "turn_2_answer_contains": "14"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GPA_MEMORY_03",
+    "category": "session_memory",
+    "language": "en",
+    "conversation_type": "multi_turn",
+    "problem_pattern": "GPA supplied earlier in session",
+    "turns": [
+      {
+        "question": "My GPA is 3.2."
+      },
+      {
+        "question": "So how many hours may I register?"
+      }
+    ],
+    "expected": {
+      "turn_2_answer_contains": "21"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "ISOLATION_NEW_01",
+    "category": "session_isolation",
+    "language": "en",
+    "conversation_type": "multi_session",
+    "problem_pattern": "new session does not remember previous session",
+    "turns": [
+      {
+        "question": "What is AI.499?",
+        "session": "primary"
+      },
+      {
+        "question": "And what is its prerequisite?",
+        "session": "secondary"
+      }
+    ],
+    "expected": {
+      "after_context_clarification": true,
+      "excludes_after_context": [
+        "AI.499",
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "ISOLATION_DELETE_01",
+    "category": "session_isolation",
+    "language": "en",
+    "conversation_type": "delete_session",
+    "problem_pattern": "deleting a session clears memory",
+    "turns": [
+      {
+        "question": "What is AI.499?",
+        "session": "primary"
+      },
+      {
+        "action": "delete",
+        "session": "primary"
+      },
+      {
+        "question": "And what is its prerequisite?",
+        "session": "primary"
+      }
+    ],
+    "expected": {
+      "after_context_clarification": true,
+      "excludes_after_context": [
+        "AI.499",
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "ISOLATION_CROSS_01",
+    "category": "session_isolation",
+    "language": "en",
+    "conversation_type": "multi_session",
+    "problem_pattern": "no cross-session leakage",
+    "turns": [
+      {
+        "question": "Tell me about AI.499.",
+        "session": "primary"
+      },
+      {
+        "question": "Tell me about CS.371.",
+        "session": "secondary"
+      },
+      {
+        "question": "What is its prerequisite?",
+        "session": "secondary"
+      }
+    ],
+    "expected": {
+      "turn_3_standalone_contains": "CS.371",
+      "turn_3_answer_contains": "MATH241",
+      "turn_3_excludes": "AI.498"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "TYPO_EN_01",
+    "category": "typo",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "What is the prerequsite for AI.499?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "TYPO_EN_02",
+    "category": "typo",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "AI.499 credt hours?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "3"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "TYPO_EN_03",
+    "category": "typo",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "Which semster has AI.499?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "8"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "AR_EG_01",
+    "category": "arabic_robustness",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "مادة AI.499 متطلبها ايه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "AR_EG_02",
+    "category": "arabic_robustness",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "AI499 محتاج اخد ايه قبلها"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "MIXED_01",
+    "category": "code_switching",
+    "language": "mixed",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "AI.499 كام credit hours؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "3"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "MIXED_02",
+    "category": "code_switching",
+    "language": "mixed",
+    "conversation_type": "single_turn",
+    "problem_pattern": "typo / dialect / code-switch variant",
+    "turns": [
+      {
+        "question": "مادة CS.371 عندها prerequisite ايه؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "MATH241",
+        "CS.102"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "AMBIG_01",
+    "category": "ambiguous_follow_up",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "ambiguous follow-up",
+    "turns": [
+      {
+        "question": "And what is its prerequisite?"
+      }
+    ],
+    "expected": {
+      "clarification": true,
+      "excludes": [
+        "AI.499",
+        "CS.371",
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "AMBIG_03",
+    "category": "ambiguous_follow_up",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "ambiguous follow-up",
+    "turns": [
+      {
+        "question": "طب ومتطلبها ايه؟"
+      }
+    ],
+    "expected": {
+      "clarification": true,
+      "excludes": [
+        "AI.499",
+        "CS.371",
+        "AI.498"
+      ]
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "FALLBACK_01",
+    "category": "fallback",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "question outside current academic records",
+    "turns": [
+      {
+        "question": "What is the tuition price per credit hour on 4 September 2026?"
+      }
+    ],
+    "expected": {
+      "exact_fallback": false
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "FALLBACK_02",
+    "category": "fallback",
+    "language": "ar",
+    "conversation_type": "single_turn",
+    "problem_pattern": "question outside current academic records",
+    "turns": [
+      {
+        "question": "ما هو سعر الساعة المعتمدة الحالي؟"
+      }
+    ],
+    "expected": {
+      "exact_fallback": true
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "FALLBACK_03",
+    "category": "fallback",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "question outside current academic records",
+    "turns": [
+      {
+        "question": "What live sections are open right now?"
+      }
+    ],
+    "expected": {
+      "exact_fallback": false
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "UNSUPPORTED_02",
+    "category": "personal_live_data",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "student/live-data pattern",
+    "turns": [
+      {
+        "question": "How many credit hours do I personally have left to graduate?"
+      }
+    ],
+    "expected": {
+      "missing_data": "completed-credit ledger",
+      "recommended_integration": "SIS degree audit"
+    },
+    "support_status": "UNSUPPORTED_DATA_REQUIREMENT"
+  },
+  {
+    "id": "UNSUPPORTED_07",
+    "category": "personal_live_data",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "student/live-data pattern",
+    "turns": [
+      {
+        "question": "Which sections are open for AI.499 now?"
+      }
+    ],
+    "expected": {
+      "missing_data": "live section capacity",
+      "recommended_integration": "timetable/registration API"
+    },
+    "support_status": "UNSUPPORTED_DATA_REQUIREMENT"
+  },
+  {
+    "id": "TRAINING_EN_01",
+    "category": "practical_training",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "graduation requirements / practical training",
+    "turns": [
+      {
+        "question": "How many practical training hours and weeks are required?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "90",
+        "6"
+      ],
+      "top_source_contains": "practical_training"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "TRAINING_AR_01",
+    "category": "practical_training",
+    "language": "ar",
+    "conversation_type": "single_turn",
+    "problem_pattern": "هل التدريب العملي مطلوب للتخرج وما شروطه؟",
+    "turns": [
+      {
+        "question": "ما شروط التدريب العملي وهل يُحسب في المعدل؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "63",
+        "0"
+      ],
+      "contains_any": [
+        "المعدل",
+        "GPA"
+      ],
+      "top_source_contains": "practical_training"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GRAD_PROJECT_EN_01",
+    "category": "graduation_project",
+    "language": "en",
+    "conversation_type": "single_turn",
+    "problem_pattern": "graduation project prerequisites",
+    "turns": [
+      {
+        "question": "What is the prerequisite for AI.498 Graduation Project I?"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "98"
+      ],
+      "top_source_contains": "AI.498"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "GRAD_PROJECT_AR_01",
+    "category": "graduation_project",
+    "language": "ar-eg",
+    "conversation_type": "single_turn",
+    "problem_pattern": "graduation project sequence",
+    "turns": [
+      {
+        "question": "مشروع التخرج AI.499 لازم أكون واخد إيه قبله؟"
+      }
+    ],
+    "expected": {
+      "contains": [
+        "AI.498"
+      ],
+      "top_source_contains": "AI.499"
+    },
+    "support_status": "SUPPORTED"
+  },
+  {
+    "id": "FOLLOW_FOCUSED_01",
+    "category": "follow_up",
+    "language": "en",
+    "conversation_type": "multi_turn",
+    "problem_pattern": "course identity then prerequisite follow-up",
+    "turns": [
+      {
+        "question": "What is AI.499?"
+      },
+      {
+        "question": "And what is its prerequisite?"
+      }
+    ],
+    "expected": {
+      "turn_2_standalone_contains": "AI.499",
+      "turn_2_answer_contains": "AI.498"
+    },
+    "support_status": "SUPPORTED"
+  }
+]
