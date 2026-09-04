@@ -17,6 +17,7 @@ from .student_profile import (
     extract_profile_updates,
     onboarding_message,
     profile_is_ready,
+    contains_arabic,
 )
 
 from .rag_chain import (
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="MUST Academic Assistant API",
-    version="3.1.0",
+    version="3.1.1",
 )
 
 
@@ -73,7 +74,7 @@ def health():
     return {
         "status": "ok",
         "service": "MUST Academic Assistant API",
-        "version": "3.1.0",
+        "version": "3.1.1",
         "vision": True,
     }
 
@@ -114,11 +115,14 @@ def chat(req: ChatRequest):
             req.question
         )
 
+
         if updates.get("gpa") is not None:
+
             session_store.update_profile(
                 req.session_id,
                 gpa=updates["gpa"],
             )
+
 
         if updates.get(
             "completed_hours"
@@ -131,11 +135,14 @@ def chat(req: ChatRequest):
                 ],
             )
 
+
         if updates.get("major") is not None:
+
             session_store.update_profile(
                 req.session_id,
                 major=updates["major"],
             )
+
 
         profile = session_store.get_profile(
             req.session_id
@@ -157,17 +164,20 @@ def chat(req: ChatRequest):
                 user_text=req.question,
             )
 
+
             session_store.add_message(
                 req.session_id,
                 role="user",
                 content=req.question,
             )
 
+
             session_store.add_message(
                 req.session_id,
                 role="assistant",
                 content=answer,
             )
+
 
             return {
                 "session_id":
@@ -199,6 +209,7 @@ def chat(req: ChatRequest):
 
         stage = "profile_only_check"
 
+
         profile_data_was_supplied = (
             updates.get("gpa") is not None
             or updates.get(
@@ -206,6 +217,7 @@ def chat(req: ChatRequest):
             ) is not None
             or updates.get("major") is not None
         )
+
 
         question_indicators = [
             "?",
@@ -217,6 +229,9 @@ def chat(req: ChatRequest):
             "can i",
             "may i",
             "which",
+            "why",
+            "when",
+            "where",
 
             # Arabic
             "هل",
@@ -227,18 +242,26 @@ def chat(req: ChatRequest):
             "أقدر",
             "اقدر",
             "ينفع",
+            "ليه",
+            "لماذا",
+            "متى",
+            "فين",
+            "أين",
         ]
+
 
         question_lower = (
             req.question
             .lower()
         )
 
+
         looks_like_question = any(
             indicator in question_lower
             for indicator
             in question_indicators
         )
+
 
         if (
             profile_data_was_supplied
@@ -250,17 +273,20 @@ def chat(req: ChatRequest):
                 user_text=req.question,
             )
 
+
             session_store.add_message(
                 req.session_id,
                 role="user",
                 content=req.question,
             )
 
+
             session_store.add_message(
                 req.session_id,
                 role="assistant",
                 content=answer,
             )
+
 
             return {
                 "session_id":
@@ -292,6 +318,7 @@ def chat(req: ChatRequest):
 
         stage = "followup_validation"
 
+
         if (
             not history
             and needs_conversation_context(
@@ -299,10 +326,21 @@ def chat(req: ChatRequest):
             )
         ):
 
-            answer = (
-                "Which course or subject "
-                "do you mean?"
-            )
+            if contains_arabic(
+                req.question
+            ):
+
+                answer = (
+                    "تقصد أي مادة أو موضوع؟"
+                )
+
+            else:
+
+                answer = (
+                    "Which course or subject "
+                    "do you mean?"
+                )
+
 
             session_store.add_message(
                 req.session_id,
@@ -310,11 +348,13 @@ def chat(req: ChatRequest):
                 content=req.question,
             )
 
+
             session_store.add_message(
                 req.session_id,
                 role="assistant",
                 content=answer,
             )
+
 
             return {
                 "session_id":
@@ -349,6 +389,7 @@ def chat(req: ChatRequest):
 
         stage = "rewrite_question"
 
+
         standalone_question = (
             rewrite_question(
                 question=req.question,
@@ -358,20 +399,102 @@ def chat(req: ChatRequest):
 
 
         # =================================================
-        # 7. RAG retrieval
+        # 7. RAG Retrieval
         # =================================================
 
         stage = "rag_retrieval"
+
 
         top_k = get_retrieval_top_k(
             standalone_question
         )
 
-        retrieved = retrieve_context(
-            question=standalone_question,
-            top_k=top_k,
-            profile=profile,
-        )
+
+        try:
+
+            retrieved = retrieve_context(
+                question=standalone_question,
+                top_k=top_k,
+                profile=profile,
+            )
+
+
+        except RuntimeError as exc:
+
+            logger.warning(
+                "RAG temporarily unavailable | "
+                "session_id=%s | error=%s",
+                req.session_id,
+                exc,
+            )
+
+
+            # =============================================
+            # Graceful degradation
+            # =============================================
+
+            if contains_arabic(
+                req.question
+            ):
+
+                answer = (
+                    "خدمة المعلومات الأكاديمية "
+                    "غير متاحة مؤقتًا. "
+                    "حاول مرة ثانية بعد لحظات."
+                )
+
+            else:
+
+                answer = (
+                    "The academic knowledge service "
+                    "is temporarily unavailable. "
+                    "Please try again in a moment."
+                )
+
+
+            session_store.add_message(
+                req.session_id,
+                role="user",
+                content=req.question,
+            )
+
+
+            session_store.add_message(
+                req.session_id,
+                role="assistant",
+                content=answer,
+            )
+
+
+            return {
+                "session_id":
+                    req.session_id,
+
+                "question":
+                    req.question,
+
+                "standalone_question":
+                    standalone_question,
+
+                "answer":
+                    answer,
+
+                "sources":
+                    [],
+
+                "profile":
+                    profile,
+
+                "onboarding_complete":
+                    True,
+
+                "history_size":
+                    len(history) + 2,
+
+                "service_status":
+                    "rag_temporarily_unavailable",
+            }
+
 
         context = retrieved[
             "context"
@@ -384,14 +507,28 @@ def chat(req: ChatRequest):
 
         stage = "answer_generation"
 
+
         if not context:
 
-            answer = (
-                "The available academic "
-                "information is not sufficient "
-                "to answer this question "
-                "accurately."
-            )
+            if contains_arabic(
+                req.question
+            ):
+
+                answer = (
+                    "المعلومات الأكاديمية المتاحة "
+                    "غير كافية للإجابة على هذا "
+                    "السؤال بدقة."
+                )
+
+            else:
+
+                answer = (
+                    "The available academic "
+                    "information is not sufficient "
+                    "to answer this question "
+                    "accurately."
+                )
+
 
         else:
 
@@ -409,11 +546,13 @@ def chat(req: ChatRequest):
 
         stage = "save_conversation"
 
+
         session_store.add_message(
             req.session_id,
             role="user",
             content=req.question,
         )
+
 
         session_store.add_message(
             req.session_id,
@@ -427,6 +566,7 @@ def chat(req: ChatRequest):
         # =================================================
 
         stage = "response"
+
 
         return {
             "session_id":
@@ -452,6 +592,9 @@ def chat(req: ChatRequest):
 
             "history_size":
                 len(history) + 2,
+
+            "service_status":
+                "ok",
         }
 
 
@@ -463,6 +606,7 @@ def chat(req: ChatRequest):
             stage,
             req.session_id,
         )
+
 
         raise HTTPException(
             status_code=500,
@@ -495,11 +639,13 @@ async def upload_transcript(
 
         stage = "validate_file_type"
 
+
         allowed_content_types = {
             "image/jpeg",
             "image/png",
             "application/pdf",
         }
+
 
         if (
             file.content_type
@@ -510,7 +656,8 @@ async def upload_transcript(
                 status_code=400,
                 detail=(
                     "Unsupported file type. "
-                    "Please upload JPG, PNG, or PDF."
+                    "Please upload JPG, "
+                    "PNG, or PDF."
                 ),
             )
 
@@ -521,7 +668,9 @@ async def upload_transcript(
 
         stage = "read_file"
 
+
         file_bytes = await file.read()
+
 
         if not file_bytes:
 
@@ -539,11 +688,13 @@ async def upload_transcript(
 
         stage = "validate_file_size"
 
+
         max_size = (
             10
             * 1024
             * 1024
         )
+
 
         if len(file_bytes) > max_size:
 
@@ -563,6 +714,7 @@ async def upload_transcript(
 
         stage = "ensure_session"
 
+
         session_store.update_profile(
             session_id
         )
@@ -573,6 +725,7 @@ async def upload_transcript(
         # =================================================
 
         stage = "vision_extraction"
+
 
         extracted = await run_in_threadpool(
             parse_academic_record,
@@ -587,14 +740,17 @@ async def upload_transcript(
 
         stage = "validate_extraction"
 
+
         if not isinstance(
             extracted,
             dict,
         ):
+
             raise RuntimeError(
                 "Vision parser returned "
                 "an invalid response type."
             )
+
 
         expected_fields = {
             "gpa",
@@ -603,12 +759,15 @@ async def upload_transcript(
             "completed_courses",
         }
 
+
         missing_keys = (
             expected_fields
             - set(extracted.keys())
         )
 
+
         if missing_keys:
+
             raise RuntimeError(
                 "Vision parser response is "
                 "missing required keys: "
@@ -623,6 +782,7 @@ async def upload_transcript(
         # =================================================
 
         stage = "update_profile"
+
 
         update_kwargs = {}
 
@@ -639,7 +799,7 @@ async def upload_transcript(
             ]
 
 
-        # Completed hours
+        # Completed Hours
         if extracted.get(
             "completed_hours"
         ) is not None:
@@ -663,12 +823,13 @@ async def upload_transcript(
             ]
 
 
-        # Completed courses
+        # Completed Courses
         completed_courses = (
             extracted.get(
                 "completed_courses"
             )
         )
+
 
         if isinstance(
             completed_courses,
@@ -694,6 +855,7 @@ async def upload_transcript(
 
         stage = "reload_profile"
 
+
         profile = (
             session_store.get_profile(
                 session_id
@@ -707,6 +869,7 @@ async def upload_transcript(
 
         stage = "profile_status"
 
+
         onboarding_complete = (
             profile_is_ready(
                 profile
@@ -719,6 +882,7 @@ async def upload_transcript(
         # =================================================
 
         stage = "response"
+
 
         return {
             "status":
@@ -749,6 +913,9 @@ async def upload_transcript(
 
             "extraction_status":
                 "completed",
+
+            "service_status":
+                "ok",
         }
 
 
@@ -766,6 +933,7 @@ async def upload_transcript(
             session_id,
         )
 
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -777,8 +945,7 @@ async def upload_transcript(
 
 
 # =========================================================
-# Optional Alias:
-# Better endpoint name for future website integration
+# Academic Record Alias
 # =========================================================
 
 @app.post(
@@ -789,11 +956,10 @@ async def upload_academic_record(
     file: UploadFile = File(...),
 ):
     """
-    Alias for the current transcript endpoint.
+    Preferred frontend endpoint for Academic Record upload.
 
-    This allows the frontend team to use the clearer
-    'academic-record' name while preserving backward
-    compatibility with '/transcript'.
+    The older /transcript endpoint remains available
+    for backward compatibility.
     """
 
     return await upload_transcript(
@@ -816,6 +982,7 @@ def end_session(
     session_store.clear_session(
         session_id
     )
+
 
     return {
         "status":

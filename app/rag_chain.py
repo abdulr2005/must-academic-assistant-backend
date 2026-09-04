@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 
 from langchain_core.messages import (
@@ -21,14 +22,6 @@ from .prompts import (
 def is_registration_load_question(
     question: str,
 ) -> bool:
-    """
-    Detect questions about HOW MANY credit hours
-    the student is allowed to register.
-
-    This must NOT trigger for generic course-registration
-    questions such as:
-        Can I register AI.499?
-    """
 
     q = question.lower().strip()
 
@@ -72,11 +65,6 @@ def is_registration_load_question(
 def extract_gpa_from_question(
     question: str,
 ):
-    """
-    Fallback GPA extraction from the question text.
-
-    Profile GPA is preferred whenever available.
-    """
 
     q = question.lower()
 
@@ -101,6 +89,7 @@ def extract_gpa_from_question(
         )
 
         if match:
+
             try:
                 value = float(
                     match.group(1)
@@ -118,9 +107,6 @@ def extract_gpa_from_question(
 def get_profile_gpa(
     profile: dict = None,
 ):
-    """
-    Safely get GPA from session profile.
-    """
 
     if not profile:
         return None
@@ -149,12 +135,6 @@ def get_profile_gpa(
 def get_retrieval_top_k(
     question: str,
 ) -> int:
-    """
-    Keep final context small.
-
-    Registration-load questions use regulation-only
-    filtering after a wider candidate retrieval.
-    """
 
     if is_registration_load_question(
         question
@@ -165,7 +145,7 @@ def get_retrieval_top_k(
 
 
 # =========================================================
-# Registration Rule Filtering
+# Registration Filtering
 # =========================================================
 
 def filter_registration_results(
@@ -174,36 +154,15 @@ def filter_registration_results(
     final_top_k: int,
     profile: dict = None,
 ) -> list:
-    """
-    Filter registration-load retrieval to the correct
-    GPA regulation articles.
-
-    Priority:
-        1. GPA stored in session profile
-        2. GPA mentioned in question text
-
-    This prevents semester-plan/course chunks from
-    contaminating registration-load answers.
-    """
-
-    # =====================================================
-    # Prefer profile GPA
-    # =====================================================
 
     gpa = get_profile_gpa(
         profile
     )
 
-    # Fallback to question only if profile has no GPA
     if gpa is None:
         gpa = extract_gpa_from_question(
             question
         )
-
-
-    # =====================================================
-    # Keep only GPA regulation chunks
-    # =====================================================
 
     gpa_results = []
 
@@ -222,20 +181,11 @@ def filter_registration_results(
                 item
             )
 
-
-    # =====================================================
-    # If GPA is unavailable
-    # =====================================================
-
     if gpa is None:
+
         return gpa_results[
             :final_top_k
         ]
-
-
-    # =====================================================
-    # Select required regulation articles
-    # =====================================================
 
     if gpa < 2.0:
 
@@ -257,11 +207,6 @@ def filter_registration_results(
             "gpa_article_1",
         ]
 
-
-    # =====================================================
-    # Build lookup by chunk_id
-    # =====================================================
-
     by_chunk_id = {}
 
     for item in gpa_results:
@@ -280,11 +225,6 @@ def filter_registration_results(
                 chunk_id
             ] = item
 
-
-    # =====================================================
-    # Select preferred chunks
-    # =====================================================
-
     selected = []
 
     for chunk_id in preferred_ids:
@@ -294,14 +234,10 @@ def filter_registration_results(
         )
 
         if item is not None:
+
             selected.append(
                 item
             )
-
-
-    # =====================================================
-    # Defensive fallback
-    # =====================================================
 
     if len(selected) < len(
         preferred_ids
@@ -310,6 +246,7 @@ def filter_registration_results(
         for item in gpa_results:
 
             if item not in selected:
+
                 selected.append(
                     item
                 )
@@ -317,10 +254,164 @@ def filter_registration_results(
             if len(selected) >= final_top_k:
                 break
 
-
     return selected[
         :final_top_k
     ]
+
+
+# =========================================================
+# RAG Request With Retry
+# =========================================================
+
+def _request_rag(
+    payload: dict,
+) -> dict:
+    """
+    Call RAG API with retry for temporary upstream failures.
+
+    Retries:
+    - HTTP 502
+    - HTTP 503
+    - HTTP 504
+    - connection / timeout errors
+    """
+
+    max_attempts = 3
+
+    retry_statuses = {
+        502,
+        503,
+        504,
+    }
+
+    last_error = None
+
+    for attempt in range(
+        1,
+        max_attempts + 1,
+    ):
+
+        try:
+
+            response = requests.post(
+                RAG_API_URL,
+                json=payload,
+                timeout=60,
+            )
+
+            # ---------------------------------------------
+            # Temporary upstream failure
+            # ---------------------------------------------
+
+            if (
+                response.status_code
+                in retry_statuses
+            ):
+
+                last_error = RuntimeError(
+                    "Temporary RAG upstream error: "
+                    f"HTTP {response.status_code}"
+                )
+
+                if attempt < max_attempts:
+
+                    wait_seconds = (
+                        2 * attempt
+                    )
+
+                    print(
+                        "[RAG] Temporary failure "
+                        f"HTTP {response.status_code}. "
+                        f"Retry {attempt}/{max_attempts} "
+                        f"in {wait_seconds}s."
+                    )
+
+                    time.sleep(
+                        wait_seconds
+                    )
+
+                    continue
+
+                raise RuntimeError(
+                    "RAG API is temporarily unavailable "
+                    f"after {max_attempts} attempts. "
+                    f"Last status: "
+                    f"{response.status_code}"
+                )
+
+            # ---------------------------------------------
+            # Permanent HTTP error
+            # ---------------------------------------------
+
+            response.raise_for_status()
+
+            # ---------------------------------------------
+            # JSON validation
+            # ---------------------------------------------
+
+            try:
+
+                data = response.json()
+
+            except ValueError as exc:
+
+                raise RuntimeError(
+                    "RAG API returned invalid JSON."
+                ) from exc
+
+            if not isinstance(
+                data,
+                dict,
+            ):
+
+                raise RuntimeError(
+                    "RAG API returned an invalid "
+                    "response structure."
+                )
+
+            return data
+
+
+        except RuntimeError:
+
+            # Our own controlled RuntimeError
+            raise
+
+
+        except requests.RequestException as exc:
+
+            last_error = exc
+
+            if attempt < max_attempts:
+
+                wait_seconds = (
+                    2 * attempt
+                )
+
+                print(
+                    "[RAG] Request error "
+                    f"{type(exc).__name__}. "
+                    f"Retry {attempt}/{max_attempts} "
+                    f"in {wait_seconds}s."
+                )
+
+                time.sleep(
+                    wait_seconds
+                )
+
+                continue
+
+            raise RuntimeError(
+                "RAG API request failed "
+                f"after {max_attempts} attempts: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+
+    raise RuntimeError(
+        "RAG API request failed: "
+        f"{last_error}"
+    )
 
 
 # =========================================================
@@ -332,13 +423,6 @@ def retrieve_context(
     top_k: int = 3,
     profile: dict = None,
 ) -> dict:
-    """
-    Retrieve RAG context.
-
-    For registration-load questions, session profile GPA
-    is injected into retrieval routing so image-extracted
-    or previously stored GPA is always available.
-    """
 
     registration_load = (
         is_registration_load_question(
@@ -346,12 +430,11 @@ def retrieve_context(
         )
     )
 
-
-    # =====================================================
-    # Build retrieval query
-    # =====================================================
-
     retrieval_question = question
+
+    # =====================================================
+    # Inject profile GPA for registration routing
+    # =====================================================
 
     if registration_load:
 
@@ -367,9 +450,8 @@ def retrieve_context(
                 f"{profile_gpa:.2f}"
             )
 
-
     # =====================================================
-    # Wider candidate pool for registration rules
+    # Wider candidate pool
     # =====================================================
 
     request_top_k = (
@@ -381,7 +463,6 @@ def retrieve_context(
         else top_k
     )
 
-
     payload = {
         "question":
             retrieval_question,
@@ -390,35 +471,28 @@ def retrieve_context(
             request_top_k,
     }
 
-
     # =====================================================
-    # RAG API request
+    # Request RAG API
     # =====================================================
 
-    try:
-
-        response = requests.post(
-            RAG_API_URL,
-            json=payload,
-            timeout=60,
-        )
-
-        response.raise_for_status()
-
-    except requests.RequestException as exc:
-
-        raise RuntimeError(
-            f"RAG API request failed: {exc}"
-        ) from exc
-
-
-    data = response.json()
+    data = _request_rag(
+        payload
+    )
 
     results = data.get(
         "results",
         [],
     )
 
+    if not isinstance(
+        results,
+        list,
+    ):
+
+        raise RuntimeError(
+            "RAG API 'results' field "
+            "is not a list."
+        )
 
     # =====================================================
     # Registration filtering
@@ -426,11 +500,13 @@ def retrieve_context(
 
     if registration_load:
 
-        results = filter_registration_results(
-            results=results,
-            question=retrieval_question,
-            final_top_k=top_k,
-            profile=profile,
+        results = (
+            filter_registration_results(
+                results=results,
+                question=retrieval_question,
+                final_top_k=top_k,
+                profile=profile,
+            )
         )
 
     else:
@@ -439,15 +515,20 @@ def retrieve_context(
             :top_k
         ]
 
-
     # =====================================================
-    # Normalize context
+    # Normalize Context
     # =====================================================
 
     context = []
     sources = []
 
     for item in results:
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
 
         text = (
             item.get(
@@ -502,10 +583,10 @@ def retrieve_context(
         )
 
         if chunk_id:
+
             sources.append(
                 chunk_id
             )
-
 
     return {
         "context":
@@ -563,22 +644,12 @@ def convert_history(
 def needs_conversation_context(
     question: str,
 ) -> bool:
-    """
-    Return True when the question depends on previous
-    conversation context and does not identify the
-    subject itself.
-    """
 
     q = (
         question
         .lower()
         .strip()
     )
-
-
-    # =====================================================
-    # Explicit course code = self-contained
-    # =====================================================
 
     course_code_pattern = (
         r"\b[a-z]{2,5}\.?\d{3}\b"
@@ -590,11 +661,6 @@ def needs_conversation_context(
         flags=re.IGNORECASE,
     ):
         return False
-
-
-    # =====================================================
-    # Follow-up references
-    # =====================================================
 
     reference_phrases = [
         # English
@@ -637,13 +703,9 @@ def rewrite_question(
     question: str,
     history: list,
 ) -> str:
-    """
-    Rewrite contextual follow-ups as standalone questions.
-    """
 
     if not history:
         return question
-
 
     conversation = []
 
@@ -663,11 +725,9 @@ def rewrite_question(
             f"{role}: {content}"
         )
 
-
     history_text = "\n".join(
         conversation
     )
-
 
     rewrite_prompt = f"""
 Rewrite the student's latest question as a standalone question.
@@ -689,17 +749,11 @@ Latest question:
 {question}
 """
 
-
     rewritten = llm.invoke(
         rewrite_prompt
     )
 
     content = rewritten.content
-
-
-    # =====================================================
-    # Gemini-style structured content
-    # =====================================================
 
     if isinstance(
         content,
@@ -729,6 +783,7 @@ Latest question:
                 )
 
                 if text:
+
                     text_parts.append(
                         text
                     )
@@ -736,7 +791,6 @@ Latest question:
         content = "".join(
             text_parts
         )
-
 
     if not isinstance(
         content,
@@ -747,7 +801,6 @@ Latest question:
             "Unexpected LLM response type: "
             f"{type(content)}"
         )
-
 
     return content.strip()
 
@@ -762,9 +815,6 @@ def generate_answer(
     history: list,
     profile: dict = None,
 ):
-    """
-    Generate the final grounded academic answer.
-    """
 
     turn_prompt = build_turn_prompt(
         student_profile=profile,
@@ -772,7 +822,6 @@ def generate_answer(
         context=context,
         question=question,
     )
-
 
     messages = [
         (
@@ -785,17 +834,11 @@ def generate_answer(
         ),
     ]
 
-
     response = llm.invoke(
         messages
     )
 
     content = response.content
-
-
-    # =====================================================
-    # Gemini-style structured content
-    # =====================================================
 
     if isinstance(
         content,
@@ -825,6 +868,7 @@ def generate_answer(
                 )
 
                 if text:
+
                     text_parts.append(
                         text
                     )
@@ -832,7 +876,6 @@ def generate_answer(
         content = "".join(
             text_parts
         )
-
 
     if not isinstance(
         content,
@@ -843,6 +886,5 @@ def generate_answer(
             "Unexpected LLM response type: "
             f"{type(content)}"
         )
-
 
     return content.strip()
