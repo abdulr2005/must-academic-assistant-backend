@@ -1,3 +1,6 @@
+from .nlp.profile import explicit_profile_updates
+from .nlp import normalize_course_codes
+from .answer_evidence import no_data_answer
 import base64
 import logging
 import re
@@ -230,15 +233,14 @@ def chat(req: ChatRequest):
         if input_type == "text":
             stage = "extract_profile"
             if not profile_is_ready(profile):
-                updates = extract_profile_updates(current_question)
-                short_updates = extract_short_onboarding_reply(
+                updates = extract_short_onboarding_reply(
                     text=current_question,
                     profile=profile,
                 )
-                for key, value in short_updates.items():
-                    if updates.get(key) is None and value is not None:
-                        updates[key] = value
+            else:
+                updates = explicit_profile_updates(current_question)
 
+            if any(value is not None for value in updates.values()):
                 session_store.update_profile(
                     req.session_id,
                     gpa=updates.get("gpa"),
@@ -342,6 +344,8 @@ def chat(req: ChatRequest):
         else:
             standalone_question = current_question
 
+        standalone_question = normalize_course_codes(standalone_question)
+
         # 9. Retrieve RAG context
         stage = "rag_retrieval"
         top_k = get_retrieval_top_k(standalone_question)
@@ -355,10 +359,7 @@ def chat(req: ChatRequest):
         # 10. Generate personalized answer
         stage = "answer_generation"
         if not context:
-            answer = (
-                "The available academic information is not sufficient "
-                "to answer this question accurately."
-            )
+            answer = no_data_answer(current_question)
         else:
             answer = generate_answer(
                 question=current_question,
