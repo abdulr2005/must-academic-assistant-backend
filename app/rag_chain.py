@@ -989,6 +989,7 @@ def retrieve_context(
         "BROAD_MAJOR_CURRICULUM",
         "CORE_REQUIRED_COURSES",
         "MAJOR_ELECTIVES",
+        "SEMESTER_PLAN",
     }
     curriculum_major = (
         _curriculum_major(question, profile)
@@ -1000,6 +1001,7 @@ def retrieve_context(
             "BROAD_MAJOR_CURRICULUM": "authoritative semester plans",
             "CORE_REQUIRED_COURSES": "officially labelled Major Core course records",
             "MAJOR_ELECTIVES": "actual elective pool course records",
+            "SEMESTER_PLAN": "the requested semester plan for the target major",
         }[curriculum_intent]
         retrieval_question = (
             f"{question}\n"
