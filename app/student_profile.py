@@ -497,7 +497,7 @@ def extract_profile_fallback(text: str) -> dict:
     # Completed Hours
     # -----------------------------------------------------
     # Exclude questions asking about future registration load (e.g. Can I register 18 hours?)
-    is_reg_query = bool(
+    is_reg_query = looks_like_registration_question or bool(
         re.search(
             r"(?:register|take|enroll\s*in|اسجل|أسجل|تسجيل|اخد|آخذ)\s*(?:more\s+than\s+)?(\d{1,3})",
             text,
